@@ -1,0 +1,9 @@
+# GPU: cài PyTorch bản CUDA trước, ví dụ CUDA 12.1:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+ultralytics>=8.3.0
+supervision>=0.25.0,<0.31.0
+opencv-python>=4.9.0
+PySide6>=6.6.0
+numpy>=1.26.0
+pytest>=8.0.0

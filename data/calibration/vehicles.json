@@ -1,0 +1,11 @@
+{
+    "counting_line": {
+        "start": [0, 1500],
+        "end": [3840, 1500]
+    },
+    "perspective": {
+        "source_points": [[1252, 787], [2298, 803], [5039, 2159], [-550, 2159]],
+        "road_width_m": 25,
+        "road_length_m": 250
+    }
+}

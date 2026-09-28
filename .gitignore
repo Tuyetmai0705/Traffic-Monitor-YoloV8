@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Kết quả chạy
+outputs/videos/*
+outputs/reports/*
+outputs/logs/*
+!outputs/**/.gitkeep
+
+# Dữ liệu và trọng số lớn
+data/input/*
+!data/input/.gitkeep
+models/*.pt
+
+# Cấu hình cá nhân do Settings ghi ra
+app/config/user_config.json

@@ -1,0 +1,46 @@
+{
+    "model": {
+        "path": "models/yolov8n.pt",
+        "confidence": 0.30,
+        "iou": 0.70,
+        "device": "cuda:0",
+        "half": true,
+        "imgsz": 640
+    },
+    "classes": [2, 3, 5, 7],
+    "tracker": {
+        "track_activation_threshold": 0.25,
+        "lost_track_buffer": 30,
+        "minimum_matching_threshold": 0.8,
+        "minimum_consecutive_frames": 1,
+        "smoother_length": 5
+    },
+    "counting_line": {
+        "start": [0, 1500],
+        "end": [3840, 1500]
+    },
+    "speed": {
+        "limit_kmh": 80,
+        "window_seconds": 1.0,
+        "min_samples": 12,
+        "stale_seconds": 2.0
+    },
+    "perspective": {
+        "source_points": [[1252, 787], [2298, 803], [5039, 2159], [-550, 2159]],
+        "road_width_m": 25,
+        "road_length_m": 250
+    },
+    "output": {
+        "video_path": "outputs/videos/traffic_result.mp4",
+        "report_path": "outputs/reports/traffic_report.json",
+        "log_path": "outputs/logs/app.log"
+    },
+    "ui": {
+        "dashboard_refresh_ms": 200,
+        "display_max_width": 1280
+    },
+    "processing": {
+        "max_width": 1920,
+        "queue_size": 8
+    }
+}
