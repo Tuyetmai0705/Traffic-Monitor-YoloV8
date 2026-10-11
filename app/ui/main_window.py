@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -22,12 +23,16 @@ from app.config.settings import AppConfig
 from app.constants import messages as msg
 from app.core.exceptions import TrafficMonitorError
 from app.models.app_state import ALLOWED_STATES, Action, AppState, blocked_message, can_perform
+from app.models.event import EventType, RegionEvent
 from app.models.traffic_statistics import TrafficStatistics
 from app.services.config_service import ConfigService
-from app.services.report_service import ReportService
+from app.services.report_service import ReportService, csv_paths
 from app.services.video_service import VideoService
 from app.ui.control_panel import ControlPanel
 from app.ui.dashboard_widget import DashboardWidget
+from app.ui.event_log_widget import EventLogWidget
+from app.ui.region_panel import RegionPanel
+from app.ui.roi_editor import ROIEditorDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.styles import NOTIFY_COLORS, STATE_COLORS
 from app.ui.video_widget import VideoWidget
@@ -35,13 +40,15 @@ from app.ui.video_worker import ModelWarmupWorker, RunResult, VideoWorker
 from app.utils.device import describe_device, resolve_device
 from app.utils.display import draw_calibration, resize_to_width, to_qimage
 from app.utils.file_utils import INPUT_DIR, VIDEO_EXTENSIONS, resolve_path, to_display_path
-from app.utils.geometry import line_inside_frame
+from app.utils.geometry import line_inside_frame, polygon_inside_frame
 from app.utils.logger import get_logger
 
 logger = get_logger("main_window")
 
 _DEFAULT_LINE_RATIO = 0.7
 _THREAD_WAIT_MS = 10000
+_SIDE_PANEL_WIDTH = 440
+_TAB_TRAFFIC, _TAB_REGIONS, _TAB_EVENTS = 0, 1, 2
 
 
 class MainWindow(QMainWindow):
@@ -67,11 +74,13 @@ class MainWindow(QMainWindow):
         self._warmup_thread: QThread | None = None
         self._warmup_worker: ModelWarmupWorker | None = None
         self._stopping = False
+        self._frame_size: tuple[int, int] | None = None
         self.dialogs_enabled = True  # automated tests turn modal error boxes off
         self._build_ui()
         self.control_panel.action_triggered.connect(self.handle_action)
         self._set_state(AppState.IDLE)
         self.dashboard.set_context(config.speed.limit_kmh, self._video_fps)
+        self._show_regions()
         self._show_device(describe_device(resolve_device(config.model.device)))
         if warm_up:
             QTimer.singleShot(0, self.warm_up_model)
@@ -147,6 +156,7 @@ class MainWindow(QMainWindow):
             Action.STOP: self.stop_processing,
             Action.EXPORT: self.export_report,
             Action.SETTINGS: self.open_settings,
+            Action.ROI: self.open_roi_editor,
         }
         handlers[action]()
         return True
@@ -178,9 +188,11 @@ class MainWindow(QMainWindow):
         self._video_path = Path(path)
         self._preview_frame = frame
         self._video_fps = info.fps
+        self._frame_size = (info.width, info.height)
         self._apply_calibration(info.width, info.height)
         self._last_result = None
         self.dashboard.reset()
+        self._show_regions()
         self.dashboard.set_context(self._run_config.speed.limit_kmh, info.fps)
         self.file_label.setText(self._video_path.name)
         self.frame_label.setText(f"frame 0/{info.total_frames}")
@@ -200,6 +212,7 @@ class MainWindow(QMainWindow):
         self._last_result = None
         self.dashboard.reset()
         self.dashboard.set_context(self._run_config.speed.limit_kmh, self._video_fps)
+        self._show_regions()
         self.progress.setValue(0)
         self._thread = QThread(self)
         self._worker = VideoWorker(self._run_config, self._video_path)
@@ -258,6 +271,38 @@ class MainWindow(QMainWindow):
         self.notify(msg.REPORT_SAVED.format(path=to_display_path(written)), "success")
         return written
 
+    def open_roi_editor(self, dialog: ROIEditorDialog | None = None) -> bool:
+        """Draw and edit regions; persist them globally and optionally for the current video."""
+        dialog = dialog or ROIEditorDialog(
+            self._run_config, self._config_service, self._preview_frame,
+            self._video_path.name if self._video_path else None, self,
+        )
+        if not dialog.exec() or dialog.result_config() is None:
+            return False
+        return self.apply_regions(dialog.result_config(), dialog.save_for_video_requested())
+
+    def apply_regions(self, config: AppConfig, save_for_video: bool) -> bool:
+        """Persist validated regions and refresh the preview and the region panel."""
+        count = len(config.regions.zones)
+        try:
+            if save_for_video and self._video_path is not None:
+                path = self._config_service.save_calibration(self._video_path, config)
+                self.notify(msg.ROI_SAVED_FOR_VIDEO.format(count=count, path=to_display_path(path)), "success")
+            else:
+                base = self._config.copy()
+                base.regions = config.regions
+                self._config_service.save(base)
+                self._config = base
+                self.notify(msg.ROI_SAVED.format(count=count), "success")
+        except TrafficMonitorError as exc:
+            self.show_error(str(exc))
+            return False
+        self._run_config = config.copy()
+        self._show_regions()
+        if self._state in (AppState.VIDEO_SELECTED, AppState.STOPPED, AppState.COMPLETED):
+            self._show_preview()
+        return True
+
     def open_settings(self, dialog: SettingsDialog | None = None) -> bool:
         """Edit settings; persist them and optional per-video calibration."""
         dialog = dialog or SettingsDialog(
@@ -284,6 +329,8 @@ class MainWindow(QMainWindow):
         self._config = config.copy()
         self._run_config = config.copy()
         self.dashboard.set_context(config.speed.limit_kmh, self._video_fps)
+        self._show_regions()
+        self._show_regions()
         self._show_device(describe_device(resolve_device(config.model.device)))
         if self._state in (AppState.VIDEO_SELECTED, AppState.STOPPED, AppState.COMPLETED):
             self._show_preview()
@@ -299,6 +346,9 @@ class MainWindow(QMainWindow):
 
     def _on_stats(self, stats: TrafficStatistics) -> None:
         self.dashboard.update_statistics(stats)
+        self.region_panel.update_statistics(stats)
+        self._on_region_events(self.event_log.update_statistics(stats))
+        self._update_tab_titles(stats)
         self.fps_label.setText(f"FPS {stats.fps:5.1f}")
         self.ms_label.setText(f"Processing {stats.processing_ms:6.1f} ms")
         self.frame_label.setText(f"frame {stats.frame_index}/{stats.total_frames}")
@@ -315,12 +365,27 @@ class MainWindow(QMainWindow):
     def _on_run_finished(self, result: RunResult) -> None:
         self._last_result = result
         self._stopping = False
-        self.dashboard.update_statistics(result.statistics)
+        self._on_stats(result.statistics)
         if result.completed:
             self.progress.setValue(1000)
         self._set_state(AppState.COMPLETED if result.completed else AppState.STOPPED)
         video = to_display_path(result.video_path) if result.video_path else "—"
-        self.notify(msg.EXPORTED.format(video=video, report=to_display_path(result.report_path)), "success")
+        template = msg.EXPORTED_WITH_CSV if "regions" in result.report else msg.EXPORTED
+        self.notify(template.format(video=video, report=to_display_path(result.report_path)), "success")
+
+    def _on_region_events(self, events: list[RegionEvent]) -> None:
+        """Raise a status-bar alert for each new OVERSTAY event."""
+        limits = {zone.roi_id: zone.max_dwell_seconds for zone in self._run_config.regions.zones}
+        for event in events:
+            if event.event_type is EventType.OVERSTAY:
+                self.notify(msg.ROI_OVERSTAY.format(track=event.track_id, cls=event.class_name, roi=event.roi_id,
+                                                    dwell=event.dwell_seconds or 0.0, limit=limits.get(event.roi_id, 0.0)), "warning")
+
+    def _update_tab_titles(self, stats: TrafficStatistics) -> None:
+        inside = sum(region.occupancy for region in stats.regions)
+        alerts = stats.overstay_alerts
+        self.side_tabs.setTabText(_TAB_REGIONS, f"Vùng ROI ({inside})" + (f" ⚠{alerts}" if alerts else ""))
+        self.side_tabs.setTabText(_TAB_EVENTS, f"Sự kiện ({stats.events_total})")
 
     def _on_error(self, message: str) -> None:
         self._stopping = False
@@ -362,20 +427,37 @@ class MainWindow(QMainWindow):
         except TrafficMonitorError as exc:
             self.notify(str(exc), "warning")
             config, found = self._config.copy(), False
+        warnings: list[str] = []
         if found:
             self.notify(msg.CALIBRATION_LOADED.format(name=self._video_path.name), "success")
         elif not line_inside_frame(config.counting_line.start, config.counting_line.end, width, height):
             y = round(height * _DEFAULT_LINE_RATIO)
             config.counting_line.start, config.counting_line.end = [0, y], [width, y]
-            QTimer.singleShot(0, lambda: self.notify(msg.CALIBRATION_MISSING.format(name=self._video_path.name), "warning"))
+            warnings.append(msg.CALIBRATION_MISSING.format(name=self._video_path.name))
+        outside = [zone.roi_id for zone in config.regions.zones if not polygon_inside_frame(zone.polygon, width, height)]
+        if outside:
+            config.regions.zones = [zone for zone in config.regions.zones if zone.roi_id not in outside]
+            warnings.append(msg.ROI_OUTSIDE_FRAME.format(ids=", ".join(outside)))
+        if warnings:
+            QTimer.singleShot(0, lambda: self.notify(" ".join(warnings), "warning"))
         self._run_config = config
 
     def _show_preview(self) -> None:
         if self._preview_frame is None:
             return
         line = self._run_config.counting_line
-        canvas = draw_calibration(self._preview_frame, line.start, line.end, self._run_config.perspective.source_points)
+        regions = self._run_config.regions
+        canvas = draw_calibration(self._preview_frame, line.start, line.end, self._run_config.perspective.source_points,
+                                  regions.zones if regions.enabled else ())
         self.video_widget.show_frame(to_qimage(resize_to_width(canvas, self._run_config.ui.display_max_width)))
+
+    def _show_regions(self) -> None:
+        """Reset the region panel and event log to the configured regions."""
+        regions = self._run_config.regions
+        self.region_panel.set_zones(regions.zones if regions.enabled else [])
+        self.event_log.reset()
+        self.side_tabs.setTabText(_TAB_REGIONS, "Vùng ROI")
+        self.side_tabs.setTabText(_TAB_EVENTS, "Sự kiện")
 
     def _set_state(self, state: AppState) -> None:
         if state is not self._state:
@@ -408,8 +490,16 @@ class MainWindow(QMainWindow):
         body.setSpacing(0)
         self.video_widget = VideoWidget()
         self.dashboard = DashboardWidget()
+        self.region_panel = RegionPanel()
+        self.event_log = EventLogWidget()
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setObjectName("sideTabs")
+        self.side_tabs.setFixedWidth(_SIDE_PANEL_WIDTH)
+        self.side_tabs.addTab(self.dashboard, "Giao thông")
+        self.side_tabs.addTab(self.region_panel, "Vùng ROI")
+        self.side_tabs.addTab(self.event_log, "Sự kiện")
         body.addWidget(self.video_widget, 1)
-        body.addWidget(self.dashboard)
+        body.addWidget(self.side_tabs)
         root.addLayout(body, 1)
         self.control_panel = ControlPanel()
         root.addWidget(self.control_panel)

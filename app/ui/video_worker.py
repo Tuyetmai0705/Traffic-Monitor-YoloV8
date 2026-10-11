@@ -176,7 +176,11 @@ class VideoWorker(QObject):
             output_video=to_display_path(video) if video else "",
             completed=completed,
         )
-        report = self._reports.build_report(stats, meta)
+        sessions, events = [], []
+        if self._frame_processor is not None:
+            sessions = self._frame_processor.monitor.get_sessions()
+            events = self._frame_processor.events.get_events()
+        report = self._reports.build_report(stats, meta, sessions, events, self._config.regions)
         return report, self._reports.export(report, resolve_path(self._config.output.report_path))
 
     def _export_partial(self) -> None:

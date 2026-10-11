@@ -7,15 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from app.config.settings import DEFAULT_CONFIG_PATH, USER_CONFIG_PATH, AppConfig, deep_merge
-from app.constants.classes import VEHICLE_CLASSES
+from app.constants.classes import OBJECT_CLASSES
 from app.core.exceptions import InvalidConfigError, OutputPathError
-from app.utils.file_utils import CALIBRATION_DIR, ensure_parent_dir, resolve_path
-from app.utils.geometry import validate_line, validate_quadrilateral
+from app.utils.file_utils import CALIBRATION_DIR, ensure_parent_dir, format_json, resolve_path
+from app.models.roi import ANCHORS
+from app.utils.geometry import validate_line, validate_polygon, validate_quadrilateral
 from app.utils.logger import get_logger
 
 logger = get_logger("config_service")
 
-CALIBRATION_KEYS = ("counting_line", "perspective")
+CALIBRATION_KEYS = ("counting_line", "perspective", "regions")
+MAX_ZONES = 12
 
 
 class ConfigService:
@@ -75,6 +77,7 @@ class ConfigService:
         self._validate_speed(config)
         self._validate_output(config)
         self._validate_ui(config)
+        self._validate_regions(config)
 
     def calibration_path(self, video_path: str | Path) -> Path:
         """Return the calibration file used for a video."""
@@ -119,8 +122,7 @@ class ConfigService:
     def _write_json(path: Path, data: dict[str, Any]) -> None:
         try:
             target = ensure_parent_dir(path)
-            with open(target, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, indent=4, ensure_ascii=False)
+            target.write_text(format_json(data), encoding="utf-8")
         except OSError as exc:
             raise OutputPathError(path, str(exc)) from exc
 
@@ -149,7 +151,7 @@ class ConfigService:
 
     def _validate_classes(self, config: AppConfig) -> None:
         self._require(len(config.classes) > 0, "classes", "chọn ít nhất một loại xe")
-        unknown = set(config.classes) - VEHICLE_CLASSES.keys()
+        unknown = set(config.classes) - OBJECT_CLASSES.keys()
         self._require(not unknown, "classes", f"class id không hỗ trợ: {sorted(unknown)}")
 
     def _validate_tracker(self, config: AppConfig) -> None:
@@ -184,6 +186,28 @@ class ConfigService:
         self._require(Path(output.video_path).suffix.lower() in (".mp4", ".avi"), "output.video_path", "đuôi phải là .mp4 hoặc .avi")
         self._require(Path(output.report_path).suffix.lower() == ".json", "output.report_path", "đuôi phải là .json")
         self._require(Path(output.log_path).suffix.lower() == ".log", "output.log_path", "đuôi phải là .log")
+
+    def _validate_regions(self, config: AppConfig) -> None:
+        regions = config.regions
+        self._require(regions.anchor in ANCHORS, "regions.anchor", f"chỉ nhận {', '.join(ANCHORS)}")
+        self._require(0.0 <= regions.grace_seconds <= 10.0, "regions.grace_seconds", "phải từ 0 đến 10 giây")
+        self._require(len(regions.zones) <= MAX_ZONES, "regions.zones", f"tối đa {MAX_ZONES} vùng")
+        seen: set[str] = set()
+        known = set(OBJECT_CLASSES.values())
+        for index, zone in enumerate(regions.zones):
+            field = f"regions.zones[{index}]"
+            self._require(bool(zone.roi_id) and zone.roi_id.isascii() and zone.roi_id.replace("_", "").replace("-", "").isalnum(),
+                          f"{field}.roi_id", "chỉ dùng chữ cái không dấu, số, '_' hoặc '-'")
+            self._require(zone.roi_id not in seen, f"{field}.roi_id", f"mã vùng '{zone.roi_id}' bị trùng")
+            seen.add(zone.roi_id)
+            self._require(bool(zone.name.strip()), f"{field}.name", "tên vùng không được để trống")
+            try:
+                validate_polygon(zone.polygon)
+            except ValueError as exc:
+                raise InvalidConfigError(f"{field}.polygon", f"vùng '{zone.roi_id}': {exc}") from exc
+            unknown = set(zone.allowed_classes) - known
+            self._require(not unknown, f"{field}.allowed_classes", f"lớp không hỗ trợ: {sorted(unknown)}")
+            self._require(0.0 <= zone.max_dwell_seconds <= 86400, f"{field}.max_dwell_seconds", "phải từ 0 (tắt) đến 86400 giây")
 
     def _validate_ui(self, config: AppConfig) -> None:
         self._require(50 <= config.ui.dashboard_refresh_ms <= 2000, "ui.dashboard_refresh_ms", "phải từ 50 đến 2000 ms")

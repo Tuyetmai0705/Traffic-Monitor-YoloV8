@@ -162,6 +162,13 @@ def test_full_gpu_pipeline_on_sample_video(config: AppConfig, tmp_path: Path) ->
     assert final.fps > 0 and final.processing_ms > 0
     assert summary.output_video.stat().st_size > 100_000
     assert summary.average_fps > 5, f"GPU pipeline too slow: {summary.average_fps:.1f} fps"
+    regions = {region.roi_id: region for region in final.regions}
+    assert set(regions) == {"zone_a", "zone_b"}, "sample regions should be active"
+    assert regions["zone_a"].entries > 0 and regions["zone_a"].peak_occupancy > 0
+    assert all(region.occupancy <= region.peak_occupancy for region in regions.values())
+    sessions = monitor.get_sessions()
+    assert sessions and all(s.dwell_seconds >= 0 for s in sessions)
+    assert frame_processor.events.count() >= len(sessions)
     capture = cv2.VideoCapture(str(summary.output_video))
     assert int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) == 175
     capture.release()

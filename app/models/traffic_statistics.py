@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.models.event import RegionEvent
+from app.models.region_statistics import RegionStatistics
 from app.models.violation import Violation
 
 
@@ -24,6 +26,10 @@ class TrafficStatistics:
     processing_ms: float = 0.0
     frame_index: int = 0
     total_frames: int = 0
+    media_time: float = 0.0
+    regions: tuple[RegionStatistics, ...] = ()
+    recent_events: tuple[RegionEvent, ...] = ()
+    events_total: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dictionary."""
@@ -40,4 +46,12 @@ class TrafficStatistics:
             "processing_ms": round(self.processing_ms, 2),
             "frame_index": self.frame_index,
             "total_frames": self.total_frames,
+            "media_time": round(self.media_time, 2),
+            "regions": [region.to_dict() for region in self.regions],
+            "events_total": self.events_total,
         }
+
+    @property
+    def overstay_alerts(self) -> int:
+        """Number of OVERSTAY alerts over all regions."""
+        return sum(region.overstays for region in self.regions)

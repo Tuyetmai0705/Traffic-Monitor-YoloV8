@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.constants.classes import CLASS_COLORS, VEHICLE_CLASSES
+from app.constants.classes import CLASS_COLORS, OBJECT_CLASSES
 from app.models.traffic_statistics import TrafficStatistics
 from app.utils.time_utils import frame_to_timestamp
 
@@ -29,7 +29,6 @@ class DashboardWidget(QFrame):
         """Build the static layout."""
         super().__init__(parent)
         self.setObjectName("dashboard")
-        self.setFixedWidth(330)
         self._fps = 25.0
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -42,7 +41,7 @@ class DashboardWidget(QFrame):
         self.total_out = self._tile(tiles, 1, "TOTAL OUT", "tileOut")
         layout.addLayout(tiles)
 
-        self.table = QTableWidget(len(VEHICLE_CLASSES), 3)
+        self.table = QTableWidget(len(OBJECT_CLASSES), 3)
         self.table.setHorizontalHeaderLabels(["CLASS", "IN", "OUT"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -57,7 +56,7 @@ class DashboardWidget(QFrame):
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        for row, (class_id, name) in enumerate(VEHICLE_CLASSES.items()):
+        for row, (class_id, name) in enumerate(OBJECT_CLASSES.items()):
             label = QTableWidgetItem(f"■ {name}")
             label.setForeground(QColor(CLASS_COLORS[class_id]))
             self.table.setItem(row, 0, label)
@@ -66,7 +65,7 @@ class DashboardWidget(QFrame):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(row, column, item)
         self.table.setFixedHeight(
-            self.table.horizontalHeader().sizeHint().height() + 26 * len(VEHICLE_CLASSES) + 2 * self.table.frameWidth() + 2
+            self.table.horizontalHeader().sizeHint().height() + 26 * len(OBJECT_CLASSES) + 2 * self.table.frameWidth() + 2
         )
         layout.addWidget(self.table)
 
@@ -76,7 +75,7 @@ class DashboardWidget(QFrame):
         self.average_speed = self._metric(metrics, 1, "Average speed", "metricValue")
         self.max_speed = self._metric(metrics, 2, "Maximum speed", "metricValue")
         self.speed_limit = self._metric(metrics, 3, "Speed limit", "metricValue")
-        self.active_tracks = self._metric(metrics, 4, "Vehicles in frame", "metricValue")
+        self.active_tracks = self._metric(metrics, 4, "Objects in frame", "metricValue")
         layout.addLayout(metrics)
 
         layout.addWidget(self._section("SPEED VIOLATIONS"))
@@ -94,7 +93,7 @@ class DashboardWidget(QFrame):
         """Refresh every value from a statistics snapshot."""
         self.total_in.setText(str(stats.total_in))
         self.total_out.setText(str(stats.total_out))
-        for row, name in enumerate(VEHICLE_CLASSES.values()):
+        for row, name in enumerate(OBJECT_CLASSES.values()):
             counts = stats.by_class.get(name, {"in": 0, "out": 0})
             self.table.item(row, 1).setText(str(counts["in"]))
             self.table.item(row, 2).setText(str(counts["out"]))
@@ -107,7 +106,7 @@ class DashboardWidget(QFrame):
 
     def reset(self) -> None:
         """Show zeros before a run."""
-        self.update_statistics(TrafficStatistics(by_class={name: {"in": 0, "out": 0} for name in VEHICLE_CLASSES.values()}))
+        self.update_statistics(TrafficStatistics(by_class={name: {"in": 0, "out": 0} for name in OBJECT_CLASSES.values()}))
         self.violation_list.clear()
         self.violation_list.addItem("Chưa có vi phạm")
 

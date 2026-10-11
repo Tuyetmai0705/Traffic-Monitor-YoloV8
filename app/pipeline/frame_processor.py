@@ -9,14 +9,16 @@ import numpy as np
 import supervision as sv
 
 from app.config.settings import AppConfig
-from app.constants.classes import CLASS_COLORS, LINE_COLOR, VIOLATION_COLOR
+from app.constants.classes import CLASS_COLORS, LINE_COLOR, OVERSTAY_COLOR, VIOLATION_COLOR
 from app.core.traffic_monitor import TrafficMonitor
 from app.models.detection_result import DetectionResult
 from app.models.traffic_statistics import TrafficStatistics
-from app.utils.display import build_overlay_lines, draw_text_panel, hex_to_bgr
+from app.services.event_service import EventService
+from app.utils.display import build_overlay_lines, draw_regions, draw_text_panel
 from app.utils.time_utils import frame_to_timestamp
 
 _EMA = 0.1
+_RECENT_EVENTS = 300
 
 
 def _class_palette() -> sv.ColorPalette:
@@ -29,9 +31,16 @@ def _class_palette() -> sv.ColorPalette:
 class FrameProcessor:
     """Frame → TrafficMonitor → annotated frame + statistics."""
 
-    def __init__(self, monitor: TrafficMonitor, config: AppConfig, video_info: sv.VideoInfo) -> None:
+    def __init__(
+        self,
+        monitor: TrafficMonitor,
+        config: AppConfig,
+        video_info: sv.VideoInfo,
+        event_service: EventService | None = None,
+    ) -> None:
         """Create annotators scaled to the video resolution."""
         self._monitor = monitor
+        self._events = event_service or EventService()
         self._fps = video_info.fps
         resolution = video_info.resolution_wh
         thickness = sv.calculate_optimal_line_thickness(resolution)
@@ -46,6 +55,12 @@ class FrameProcessor:
         )
         self._violation_label = sv.LabelAnnotator(
             color=violation, text_scale=text_scale, text_thickness=thickness, text_color=sv.Color.WHITE,
+            text_position=sv.Position.BOTTOM_LEFT, smart_position=True,
+        )
+        overstay = sv.Color.from_hex(OVERSTAY_COLOR)
+        self._overstay_box = sv.BoxAnnotator(color=overstay, thickness=thickness * 2)
+        self._overstay_label = sv.LabelAnnotator(
+            color=overstay, text_scale=text_scale, text_thickness=thickness, text_color=sv.Color.BLACK,
             text_position=sv.Position.BOTTOM_LEFT, smart_position=True,
         )
         self._trace = sv.TraceAnnotator(
@@ -65,6 +80,11 @@ class FrameProcessor:
         return self._monitor
 
     @property
+    def events(self) -> EventService:
+        """Region event log of this run."""
+        return self._events
+
+    @property
     def last_statistics(self) -> TrafficStatistics:
         """Statistics of the most recent frame."""
         return self._last_stats
@@ -73,6 +93,10 @@ class FrameProcessor:
         """Process one frame and return (annotated frame, statistics)."""
         started = time.perf_counter()
         result = self._monitor.process_frame(frame, frame_index)
+        self._events.record(result.region_events)
+        result.statistics = replace(
+            result.statistics, recent_events=self._events.recent(_RECENT_EVENTS), events_total=self._events.count()
+        )
         annotated = self.annotate(frame.copy(), result)
         elapsed = (time.perf_counter() - started) * 1000
         self._processing_ms = elapsed if self._processing_ms == 0 else (1 - _EMA) * self._processing_ms + _EMA * elapsed
@@ -80,16 +104,37 @@ class FrameProcessor:
         return annotated, self._last_stats
 
     def annotate(self, frame: np.ndarray, result: DetectionResult) -> np.ndarray:
-        """Draw traces, boxes, labels, violations, counting line and overlays."""
+        """Draw regions, traces, boxes, labels, alerts, counting line and overlays."""
         detections = result.detections
+        regions = result.statistics.regions
+        if self._monitor.roi_manager is not None:
+            draw_regions(
+                frame, self._monitor.roi_manager.zones,
+                occupancy={r.roi_id: r.occupancy for r in regions},
+                alerts={r.roi_id: sum(s.overstay for s in r.active_sessions) for r in regions},
+            )
         frame = self._trace.annotate(frame, detections)
         frame = self._box.annotate(frame, detections)
         frame = self._label.annotate(frame, detections, labels=self._labels(result))
+        overstaying = self._overstaying(result)
+        speeding = {int(t) for t in result.violating_ids}
+        amber_only = {tid: ids for tid, ids in overstaying.items() if tid not in speeding}
+        if amber_only:
+            mask = np.isin(detections.tracker_id, list(amber_only))
+            flagged = detections[mask]
+            frame = self._overstay_box.annotate(frame, flagged)
+            frame = self._overstay_label.annotate(
+                frame, flagged, labels=[f"OVERSTAY {amber_only[int(t)]}" for t in flagged.tracker_id]
+            )
         if result.violating_ids:
             mask = np.isin(detections.tracker_id, list(result.violating_ids))
             flagged = detections[mask]
             frame = self._violation_box.annotate(frame, flagged)
-            frame = self._violation_label.annotate(frame, flagged, labels=["OVERSPEED"] * len(flagged))
+            labels = [
+                f"OVERSPEED + OVERSTAY {overstaying[int(t)]}" if int(t) in overstaying else "OVERSPEED"
+                for t in flagged.tracker_id
+            ]
+            frame = self._violation_label.annotate(frame, flagged, labels=labels)
         frame = self._line.annotate(frame, line_counter=self._monitor.counter.line_zone)
         stats = replace(result.statistics, fps=self._last_stats.fps)
         draw_text_panel(frame, build_overlay_lines(stats, self._monitor.speed_limit), anchor="top-left")
@@ -102,16 +147,40 @@ class FrameProcessor:
         self._last_stats = replace(self._last_stats, fps=fps)
 
     def reset(self) -> None:
-        """Reset the monitor and timing."""
+        """Reset the monitor, the event log and timing."""
         self._monitor.reset()
+        self._events.reset()
         self._processing_ms = 0.0
         self._last_stats = TrafficStatistics(by_class=self._monitor.get_statistics().by_class)
 
     def _labels(self, result: DetectionResult) -> list[str]:
+        """``#id class conf | km/h`` plus a second line ``zone_a 3.2s`` for objects inside regions."""
         detections = result.detections
+        dwell = self._dwell_lines(result)
         labels = []
         for tracker_id, class_id, confidence in zip(detections.tracker_id, detections.class_id, detections.confidence):
             speed = result.speeds.get(int(tracker_id))
             text = f"#{tracker_id} {self._monitor.detector.get_class_name(class_id)} {confidence:.2f}"
-            labels.append(f"{text} | {speed:.0f} km/h" if speed is not None else text)
+            text = f"{text} | {speed:.0f} km/h" if speed is not None else text
+            region_text = dwell.get(int(tracker_id))
+            labels.append(f"{text}\n{region_text}" if region_text else text)
         return labels
+
+    @staticmethod
+    def _dwell_lines(result: DetectionResult) -> dict[int, str]:
+        """Track id → ``zone_a 3.2s zone_b 1.0s`` for every open session."""
+        lines: dict[int, list[str]] = {}
+        for region in result.statistics.regions:
+            for session in region.active_sessions:
+                lines.setdefault(session.track_id, []).append(f"{region.roi_id} {session.dwell_seconds:.1f}s")
+        return {track_id: "  ".join(parts) for track_id, parts in lines.items()}
+
+    @staticmethod
+    def _overstaying(result: DetectionResult) -> dict[int, str]:
+        """Track id → region ids where the open session exceeded its limit."""
+        flagged: dict[int, list[str]] = {}
+        for region in result.statistics.regions:
+            for session in region.active_sessions:
+                if session.overstay:
+                    flagged.setdefault(session.track_id, []).append(region.roi_id)
+        return {track_id: ",".join(ids) for track_id, ids in flagged.items()}

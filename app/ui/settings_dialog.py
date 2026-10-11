@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config.settings import AppConfig
-from app.constants.classes import VEHICLE_CLASSES
+from app.constants.classes import OBJECT_CLASSES
 from app.core.exceptions import InvalidConfigError, TrafficMonitorError
 from app.services.config_service import ConfigService
 from app.utils.device import available_devices
@@ -180,11 +180,11 @@ class SettingsDialog(QDialog):
         form.addRow("IoU (NMS)", self.iou)
         classes = QHBoxLayout()
         self.class_boxes: dict[int, QCheckBox] = {}
-        for class_id, name in VEHICLE_CLASSES.items():
+        for class_id, name in OBJECT_CLASSES.items():
             box = QCheckBox(f"{name} ({class_id})")
             self.class_boxes[class_id] = box
             classes.addWidget(box)
-        form.addRow("Vehicle classes", classes)
+        form.addRow("Object classes", classes)
         self.speed_limit = _spin(10, 200, 80, 5, 0)
         self.speed_limit.setSuffix(" km/h")
         form.addRow("Speed limit", self.speed_limit)
@@ -306,7 +306,8 @@ class SettingsDialog(QDialog):
         config = self.collect()
         try:
             canvas = draw_calibration(
-                self._preview_frame, config.counting_line.start, config.counting_line.end, config.perspective.source_points
+                self._preview_frame, config.counting_line.start, config.counting_line.end, config.perspective.source_points,
+                config.regions.zones if config.regions.enabled else (),
             )
         except Exception:  # preview must never break the form
             return

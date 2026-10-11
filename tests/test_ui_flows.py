@@ -17,7 +17,7 @@ from app.constants import messages as msg
 from app.models.app_state import Action, AppState
 from app.services.config_service import ConfigService
 from app.services.report_service import REQUIRED_KEYS
-from app.ui.control_panel import ControlPanel
+from app.ui.control_panel import BUTTON_LABELS, ControlPanel
 from app.ui.main_window import MainWindow
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.styles import STYLESHEET
@@ -294,4 +294,5 @@ def test_control_panel_emits_action_names(qapp: QApplication) -> None:
     panel.action_triggered.connect(received.append)
     for button in panel.buttons.values():
         button.click()
-    assert received == [a.value for a in Action]
+    assert received == [a.value for a in BUTTON_LABELS]  # display order
+    assert set(received) == {a.value for a in Action}

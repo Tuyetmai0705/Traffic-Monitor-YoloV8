@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
+from app.constants.classes import VEHICLE_CLASSES, roi_color
+from app.models.roi import ROI
 from app.models.traffic_statistics import TrafficStatistics
 
 if TYPE_CHECKING:
@@ -17,6 +20,7 @@ WHITE: Color = (240, 235, 231)
 GREEN: Color = (156, 214, 79)
 ORANGE: Color = (99, 168, 255)
 RED: Color = (62, 75, 255)
+AMBER: Color = (28, 159, 255)
 GREY: Color = (178, 165, 154)
 
 
@@ -61,10 +65,48 @@ def build_overlay_lines(stats: TrafficStatistics, speed_limit: float) -> list[tu
         (f"TOTAL OUT: {stats.total_out}", ORANGE),
     ]
     for name, counts in stats.by_class.items():
+        if name not in VEHICLE_CLASSES.values() and not (counts["in"] or counts["out"]):
+            continue  # e.g. person: only shown once someone was counted
         lines.append((f"{name.upper():<10} IN {counts['in']:>3}  OUT {counts['out']:>3}", WHITE))
     lines.append((f"SPEED VIOLATIONS: {stats.violations_count}", RED))
+    for region in stats.regions:
+        lines.append((f"{region.roi_id.upper():<10} OCC {region.occupancy:>2}  IN {region.entries:>3}  ALERT {region.overstays}", AMBER))
     lines.append((f"LIMIT {speed_limit:.0f} km/h  FPS {stats.fps:.1f}", GREY))
     return lines
+
+
+def draw_regions(
+    frame: np.ndarray,
+    zones: Sequence[ROI],
+    occupancy: dict[str, int] | None = None,
+    alerts: dict[str, int] | None = None,
+) -> np.ndarray:
+    """Draw ROI polygons with a translucent fill and an ASCII label ``roi_id: N`` (in place)."""
+    if not zones:
+        return frame
+    scale = overlay_scale(frame)
+    thickness = max(2, round(3 * scale))
+    fill = frame.copy()
+    for index, zone in enumerate(zones):
+        cv2.fillPoly(fill, [np.array(zone.polygon, dtype=np.int32)], hex_to_bgr(roi_color(index)))
+    frame[:] = cv2.addWeighted(fill, 0.16, frame, 0.84, 0)
+    font, font_scale = cv2.FONT_HERSHEY_SIMPLEX, 0.9 * scale
+    for index, zone in enumerate(zones):
+        color = hex_to_bgr(roi_color(index))
+        polygon = np.array(zone.polygon, dtype=np.int32)
+        cv2.polylines(frame, [polygon], True, color, thickness, cv2.LINE_AA)
+        text = zone.roi_id
+        if occupancy is not None:
+            text += f": {occupancy.get(zone.roi_id, 0)}"
+        if alerts and alerts.get(zone.roi_id):
+            text += f"  !{alerts[zone.roi_id]}"
+        (width, height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+        top = polygon[np.argmin(polygon[:, 1])]
+        x = int(np.clip(top[0], 4, max(4, frame.shape[1] - width - 12)))
+        y = int(np.clip(top[1] - 12, height + 12, frame.shape[0] - 4))
+        cv2.rectangle(frame, (x - 6, y - height - 10), (x + width + 6, y + 8), color, -1)
+        cv2.putText(frame, text, (x, y), font, font_scale, (16, 12, 10), thickness, cv2.LINE_AA)
+    return frame
 
 
 def draw_calibration(
@@ -72,9 +114,10 @@ def draw_calibration(
     line_start: list[int],
     line_end: list[int],
     source_points: list[list[float]],
+    zones: Sequence[ROI] = (),
 ) -> np.ndarray:
-    """Draw the counting line and the A-B-C-D perspective area on a copy of ``frame``."""
-    canvas = frame.copy()
+    """Draw ROIs, the counting line and the A-B-C-D perspective area on a copy of ``frame``."""
+    canvas = draw_regions(frame.copy(), zones)
     scale = overlay_scale(canvas)
     thickness = max(2, round(3 * scale))
     polygon = np.array(source_points, dtype=np.int32).reshape(-1, 1, 2)

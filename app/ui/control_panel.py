@@ -14,6 +14,7 @@ BUTTON_LABELS: dict[Action, str] = {
     Action.RESUME: "Resume",
     Action.STOP: "Stop",
     Action.EXPORT: "Export Report",
+    Action.ROI: "ROI Zones",
     Action.SETTINGS: "Settings",
 }
 
@@ -24,12 +25,13 @@ SHORTCUTS: dict[Action, str] = {
     Action.RESUME: "F7",
     Action.STOP: "F8",
     Action.EXPORT: "Ctrl+E",
+    Action.ROI: "Ctrl+R",
     Action.SETTINGS: "Ctrl+,",
 }
 
 
 class ControlPanel(QFrame):
-    """Seven action buttons. Blocked buttons stay clickable so the user gets an explanation."""
+    """Action buttons. Blocked buttons stay clickable so the user gets an explanation."""
 
     action_triggered = Signal(str)
 

@@ -11,6 +11,7 @@ BLOCK_STOP = "Chưa có phiên xử lý nào để dừng."
 BLOCK_EXPORT = "Chưa có kết quả. Hãy dừng xử lý hoặc chờ video chạy xong."
 BLOCK_OPEN = "Hãy dừng xử lý trước khi mở video khác."
 BLOCK_SETTINGS = "Dừng xử lý trước khi thay đổi cài đặt."
+BLOCK_ROI = "Dừng xử lý trước khi chỉnh vùng ROI."
 
 # Trạng thái xử lý
 VIDEO_SELECTED = "Đã chọn video {name} ({width}x{height}, {fps:.0f} fps, {frames} frame)."
@@ -31,6 +32,16 @@ CALIBRATION_MISSING = (
     "hãy vào Settings để chỉnh perspective và vạch đếm cho đúng tốc độ."
 )
 GPU_FALLBACK = "Không tìm thấy GPU CUDA, đang chạy bằng CPU."
+
+# Giám sát vùng ROI
+ROI_SAVED = "Đã lưu {count} vùng ROI."
+ROI_SAVED_FOR_VIDEO = "Đã lưu {count} vùng ROI cho video: {path}"
+ROI_NEED_VIDEO = "Mở video trước để vẽ vùng trên frame."
+ROI_CLASS_NOT_DETECTED = "Lớp {names} chưa được bật trong Settings nên sẽ không được phát hiện."
+ROI_POINT_HINT = "Click trái: thêm điểm · Click phải: xóa điểm cuối · Kéo điểm để di chuyển"
+ROI_OVERSTAY = "Cảnh báo: #{track} {cls} ở vùng {roi} đã {dwell:.1f} s (ngưỡng {limit:.0f} s)."
+ROI_OUTSIDE_FRAME = "Vùng {ids} nằm ngoài khung hình video này nên đã tạm tắt. Vẽ lại trong ROI Zones."
+EXPORTED_WITH_CSV = "Đã xuất video {video}, báo cáo {report} và CSV vùng ROI."
 
 # Lỗi
 VIDEO_NOT_FOUND = "Không tìm thấy video: {path}"

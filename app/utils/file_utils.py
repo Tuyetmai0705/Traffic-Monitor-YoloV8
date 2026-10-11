@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VIDEO_EXTENSIONS: tuple[str, ...] = (".mp4", ".avi", ".mov", ".mkv", ".m4v")
@@ -47,3 +50,12 @@ def to_display_path(path: str | Path) -> str:
 def is_video_file(path: str | Path) -> bool:
     """Return True when the path has a supported video extension."""
     return Path(path).suffix.lower() in VIDEO_EXTENSIONS
+
+
+_NUMBER_ARRAY = re.compile(r"\[\s*(-?[\d.]+(?:\s*,\s*-?[\d.]+)*)\s*\]")
+
+
+def format_json(data: Any) -> str:
+    """Indented JSON where arrays of plain numbers (points, lines) stay on one line."""
+    text = json.dumps(data, indent=4, ensure_ascii=False)
+    return _NUMBER_ARRAY.sub(lambda m: "[" + ", ".join(part.strip() for part in m.group(1).split(",")) + "]", text) + "\n"

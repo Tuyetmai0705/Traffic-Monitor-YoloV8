@@ -4,8 +4,55 @@
         "end": [3840, 1500]
     },
     "perspective": {
-        "source_points": [[1252, 787], [2298, 803], [5039, 2159], [-550, 2159]],
+        "source_points": [
+            [1252, 787],
+            [2298, 803],
+            [5039, 2159],
+            [-550, 2159]
+        ],
         "road_width_m": 25,
         "road_length_m": 250
+    },
+    "regions": {
+        "enabled": true,
+        "anchor": "bottom_center",
+        "grace_seconds": 1.0,
+        "zones": [
+            {
+                "roi_id": "zone_a",
+                "name": "Làn chiều về (trái)",
+                "polygon": [
+                    [1194, 990],
+                    [1686, 990],
+                    [1716, 1950],
+                    [338, 1950]
+                ],
+                "allowed_classes": [
+                    "car",
+                    "motorcycle",
+                    "bus",
+                    "truck"
+                ],
+                "max_dwell_seconds": 4.0
+            },
+            {
+                "roi_id": "zone_b",
+                "name": "Làn chiều đi (phải)",
+                "polygon": [
+                    [1920, 990],
+                    [2460, 990],
+                    [3840, 1800],
+                    [3840, 1950],
+                    [2697, 1950]
+                ],
+                "allowed_classes": [
+                    "car",
+                    "motorcycle",
+                    "bus",
+                    "truck"
+                ],
+                "max_dwell_seconds": 4.0
+            }
+        ]
     }
 }

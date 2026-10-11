@@ -29,6 +29,7 @@ class Action(str, Enum):
     STOP = "stop"
     EXPORT = "export"
     SETTINGS = "settings"
+    ROI = "roi"
 
 
 _IDLE_LIKE = frozenset({AppState.IDLE, AppState.VIDEO_SELECTED, AppState.STOPPED, AppState.COMPLETED, AppState.ERROR})
@@ -41,6 +42,7 @@ ALLOWED_STATES: dict[Action, frozenset[AppState]] = {
     Action.STOP: frozenset({AppState.RUNNING, AppState.PAUSED}),
     Action.EXPORT: frozenset({AppState.STOPPED, AppState.COMPLETED}),
     Action.SETTINGS: _IDLE_LIKE,
+    Action.ROI: _IDLE_LIKE,
 }
 
 # Target state of each successful user action (None keeps the current state).
@@ -52,6 +54,7 @@ ACTION_TARGET: dict[Action, AppState | None] = {
     Action.STOP: AppState.STOPPED,
     Action.EXPORT: None,
     Action.SETTINGS: None,
+    Action.ROI: None,
 }
 
 
@@ -71,4 +74,5 @@ def blocked_message(state: AppState, action: Action) -> str:
         Action.STOP: msg.BLOCK_STOP,
         Action.EXPORT: msg.BLOCK_EXPORT,
         Action.SETTINGS: msg.BLOCK_SETTINGS,
+        Action.ROI: msg.BLOCK_ROI,
     }[action]

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import numpy as np
 import supervision as sv
 
-from app.constants.classes import VEHICLE_CLASSES
+from app.constants.classes import OBJECT_CLASSES
 
 
 class VehicleCounter:
@@ -43,7 +43,7 @@ class VehicleCounter:
         return int(self._line_zone.out_count)
 
     def get_class_counts(self) -> dict[str, dict[str, int]]:
-        """Per-class counts for all four vehicle classes, e.g. ``{"car": {"in": 3, "out": 1}}``."""
+        """Per-class counts for every supported class, e.g. ``{"car": {"in": 3, "out": 1}}``."""
         return {name: dict(counts) for name, counts in self._class_counts.items()}
 
     def reset(self) -> None:
@@ -56,10 +56,10 @@ class VehicleCounter:
 
     def _accumulate(self, class_ids: np.ndarray, direction: str) -> None:
         for class_id in class_ids:
-            name = VEHICLE_CLASSES.get(int(class_id))
+            name = OBJECT_CLASSES.get(int(class_id))
             if name is not None:
                 self._class_counts[name][direction] += 1
 
     @staticmethod
     def _empty_counts() -> dict[str, dict[str, int]]:
-        return {name: {"in": 0, "out": 0} for name in VEHICLE_CLASSES.values()}
+        return {name: {"in": 0, "out": 0} for name in OBJECT_CLASSES.values()}

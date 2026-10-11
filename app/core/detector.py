@@ -12,7 +12,7 @@ import numpy as np
 import supervision as sv
 
 from app.config.settings import ModelConfig
-from app.constants.classes import VEHICLE_CLASSES
+from app.constants.classes import OBJECT_CLASSES
 from app.core.exceptions import InferenceError, ModelLoadError, ModelNotFoundError
 from app.utils.device import describe_device, resolve_device
 from app.utils.file_utils import resolve_path
@@ -118,7 +118,7 @@ class VehicleDetector:
         return filtered
 
     def filter_detections(self, detections: sv.Detections) -> sv.Detections:
-        """Keep detections with confidence ≥ threshold and a selected vehicle class."""
+        """Keep detections with confidence ≥ threshold and a selected class."""
         if len(detections) == 0:
             return detections
         confidence = detections.confidence if detections.confidence is not None else np.ones(len(detections))
@@ -127,8 +127,8 @@ class VehicleDetector:
 
     @staticmethod
     def get_class_name(class_id: int) -> str:
-        """Return the vehicle name for a COCO class id, or ``unknown``."""
-        return VEHICLE_CLASSES.get(int(class_id), "unknown")
+        """Return the class name (person, car, ...) for a COCO class id, or ``unknown``."""
+        return OBJECT_CLASSES.get(int(class_id), "unknown")
 
     def get_statistics(self) -> dict[str, float]:
         """Return detector counters: frames, detections and mean inference time."""

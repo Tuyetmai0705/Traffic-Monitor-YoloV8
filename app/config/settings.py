@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, TypeVar
 
+from app.models.roi import ROI
+
 CONFIG_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "default_config.json"
 USER_CONFIG_PATH = CONFIG_DIR / "user_config.json"
@@ -92,6 +94,33 @@ class ProcessingConfig:
     queue_size: int
 
 
+@dataclass
+class RegionsConfig:
+    """Region-of-interest monitoring: zones, membership anchor and exit grace period."""
+
+    enabled: bool
+    anchor: str
+    grace_seconds: float
+    zones: list[ROI]
+
+    @classmethod
+    def from_dict(cls, data: Any) -> RegionsConfig:
+        """Build from JSON, converting each zone to an ``ROI``."""
+        if not isinstance(data, dict):
+            raise ValueError("'regions' phải là object JSON")
+        missing = {"enabled", "anchor", "grace_seconds", "zones"} - data.keys()
+        if missing:
+            raise ValueError(f"'regions' thiếu khóa: {', '.join(sorted(missing))}")
+        if not isinstance(data["zones"], list):
+            raise ValueError("'regions.zones' phải là danh sách")
+        return cls(
+            enabled=bool(data["enabled"]),
+            anchor=str(data["anchor"]),
+            grace_seconds=float(data["grace_seconds"]),
+            zones=[ROI.from_dict(zone) for zone in data["zones"]],
+        )
+
+
 _Section = TypeVar("_Section")
 
 
@@ -119,6 +148,7 @@ class AppConfig:
     output: OutputConfig
     ui: UIConfig
     processing: ProcessingConfig
+    regions: RegionsConfig
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dictionary."""
@@ -132,7 +162,8 @@ class AppConfig:
         """Return a copy whose pixel coordinates are multiplied by ``scale``.
 
         Calibration is stored in original video pixels; processing may run on a
-        downscaled frame, so the counting line and source points must follow.
+        downscaled frame, so the counting line, source points and ROI polygons
+        must follow.
         """
         scaled = self.copy()
         if scale == 1.0:
@@ -140,6 +171,7 @@ class AppConfig:
         scaled.counting_line.start = [round(v * scale) for v in self.counting_line.start]
         scaled.counting_line.end = [round(v * scale) for v in self.counting_line.end]
         scaled.perspective.source_points = [[x * scale, y * scale] for x, y in self.perspective.source_points]
+        scaled.regions.zones = [zone.scaled(scale) for zone in self.regions.zones]
         return scaled
 
     @classmethod
@@ -159,6 +191,7 @@ class AppConfig:
             output=_build_section(OutputConfig, data.get("output"), "output"),
             ui=_build_section(UIConfig, data.get("ui"), "ui"),
             processing=_build_section(ProcessingConfig, data.get("processing"), "processing"),
+            regions=RegionsConfig.from_dict(data.get("regions")),
         )
 
 

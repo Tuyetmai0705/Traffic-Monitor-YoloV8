@@ -46,7 +46,8 @@ def test_get_class_name() -> None:
     assert VehicleDetector.get_class_name(3) == "motorcycle"
     assert VehicleDetector.get_class_name(5) == "bus"
     assert VehicleDetector.get_class_name(7) == "truck"
-    assert VehicleDetector.get_class_name(0) == "unknown"
+    assert VehicleDetector.get_class_name(0) == "person"
+    assert VehicleDetector.get_class_name(1) == "unknown"
 
 
 def test_missing_model_raises(config: AppConfig) -> None:

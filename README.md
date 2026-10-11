@@ -6,9 +6,9 @@
 ![PyTorch CUDA](https://img.shields.io/badge/PyTorch-CUDA%20GPU-EE4C2C?logo=pytorch&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-5C3EE8?logo=opencv&logoColor=white)
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt6)-41CD52?logo=qt&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-102%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-154%20passed-2EA44F)
 
-**Traffic Monitor** là ứng dụng desktop phân tích video giao thông trên GPU. Ứng dụng phát hiện và phân loại phương tiện bằng **YOLOv8n**, theo vết từng xe bằng **ByteTrack**, đếm lượt xe **IN/OUT** qua vạch đếm, **ước lượng tốc độ (km/h)** bằng biến đổi phối cảnh, **phát hiện xe vượt tốc độ**, hiển thị thống kê theo thời gian thực, và xuất **video đã chú thích** cùng **báo cáo JSON**.
+**Traffic Monitor** là ứng dụng desktop phân tích video giao thông trên GPU. Ứng dụng phát hiện và phân loại phương tiện bằng **YOLOv8n**, theo vết từng xe bằng **ByteTrack**, đếm lượt xe **IN/OUT** qua vạch đếm, **ước lượng tốc độ (km/h)** bằng biến đổi phối cảnh, **phát hiện xe vượt tốc độ**, **giám sát đối tượng trong vùng ROI** (số đối tượng hiện có, thời gian lưu trú, sự kiện vào/ra, cảnh báo quá giờ), hiển thị thống kê theo thời gian thực, và xuất **video đã chú thích** cùng **báo cáo JSON/CSV**.
 
 Đây là sản phẩm cuối (Bài 9) của giáo trình [Supervision](https://github.com/roboflow/supervision), được triển khai theo kiến trúc phân tầng Core / Pipeline / Services / UI.
 
@@ -45,7 +45,10 @@ Camera giao thông ghi lại lượng video lớn, nhưng đếm xe và kiểm t
 | Mỗi chiều có bao nhiêu xe con, xe máy, xe buýt, xe tải? | Đếm IN/OUT theo từng loại xe |
 | Mỗi xe chạy nhanh bao nhiêu? | Tốc độ km/h tính từ tọa độ thực (mét) sau biến đổi phối cảnh |
 | Xe nào vượt tốc độ cho phép? | Danh sách vi phạm: ID xe, loại xe, tốc độ tối đa, thời điểm |
-| Làm sao lưu lại bằng chứng và số liệu? | Video MP4 có chú thích và báo cáo JSON |
+| Vùng A hiện có bao nhiêu đối tượng, ID nào? | Occupancy theo vùng và bảng đối tượng trong vùng |
+| Mỗi đối tượng đã ở trong vùng bao lâu, vào/ra lúc nào? | Session gồm `entry_time`, `exit_time`, `dwell_seconds`; sự kiện ENTER / EXIT / LOST |
+| Đối tượng nào ở quá thời gian cho phép? | Cảnh báo OVERSTAY theo ngưỡng `max_dwell_seconds` của từng vùng |
+| Làm sao lưu lại bằng chứng và số liệu? | Video MP4 có chú thích, báo cáo JSON, file CSV session và sự kiện |
 
 ### Đối tượng sử dụng
 
@@ -53,7 +56,7 @@ Sinh viên và kỹ sư Computer Vision học pipeline phát hiện → theo v�
 
 ### Phạm vi
 
-- **Có:** xử lý file video (MP4/AVI/MOV/MKV), 4 loại xe COCO, hiệu chỉnh phối cảnh riêng cho từng video, chạy trên GPU (CUDA) và tự chuyển sang CPU khi không có GPU.
+- **Có:** xử lý file video (MP4/AVI/MOV/MKV), 4 loại xe COCO và người (`person`), nhiều vùng ROI dạng polygon, hiệu chỉnh phối cảnh riêng cho từng video, chạy trên GPU (CUDA) và tự chuyển sang CPU khi không có GPU.
 - **Chưa có:** camera trực tiếp (RTSP), nhận dạng biển số, lưu vào cơ sở dữ liệu.
 
 ---
@@ -65,16 +68,16 @@ Sinh viên và kỹ sư Computer Vision học pipeline phát hiện → theo v�
 | Ngôn ngữ | **Python** | 3.10 | Toàn bộ ứng dụng; dùng type hints, dataclasses, `X \| None` |
 | Phát hiện đối tượng | **Ultralytics YOLOv8n** (`yolov8n.pt`) | ultralytics 8.3.246 | Phát hiện xe (car, motorcycle, bus, truck) trên từng frame |
 | Deep learning / GPU | **PyTorch + CUDA** | torch 2.5.1 + CUDA 12.1 | Chạy YOLO trên GPU NVIDIA với FP16 (half precision) |
-| Computer Vision | **Supervision** (Roboflow) | 0.30.2 | `sv.Detections`, `ByteTrack`, `DetectionsSmoother`, `LineZone`, các annotator |
-| Xử lý ảnh / video | **OpenCV** | 4.12 | Đọc/ghi video, `getPerspectiveTransform`, vẽ chú thích |
+| Computer Vision | **Supervision** (Roboflow) | 0.30.2 | `sv.Detections`, `ByteTrack`, `DetectionsSmoother`, `LineZone`, anchor điểm của box, các annotator |
+| Xử lý ảnh / video | **OpenCV** | 4.12 | Đọc/ghi video, `getPerspectiveTransform`, `pointPolygonTest` (điểm trong vùng ROI), vẽ chú thích |
 | Tính toán | **NumPy** | 2.2 | Ma trận tọa độ, lọc detections |
 | Giao diện desktop | **PySide6 (Qt 6)** | 6.11 | Cửa sổ, widget, `QThread`, signal/slot, stylesheet tối |
 | Đa luồng | `QThread` + `threading` + `queue` | – | Tách UI, inference, đọc video và ghi video ra các luồng riêng |
-| Dữ liệu | `json`, `dataclasses` | stdlib | Cấu hình, hiệu chỉnh, báo cáo, model dữ liệu |
+| Dữ liệu | `json`, `csv`, `dataclasses` | stdlib | Cấu hình, hiệu chỉnh, báo cáo JSON, CSV session/sự kiện, model dữ liệu |
 | Logging | `logging` (RotatingFileHandler) | stdlib | `outputs/logs/app.log` |
 | Kiểm thử | **pytest** | 9.1 | 102 test: unit, GPU, pipeline, luồng UI end-to-end |
 
-**Thuật toán chính:** YOLOv8 (one-stage detector), ByteTrack (multi-object tracking bằng Kalman filter kết hợp ghép cặp IoU), homography 4 điểm (perspective transform), ước lượng vận tốc trên cửa sổ thời gian trượt.
+**Thuật toán chính:** YOLOv8 (one-stage detector), ByteTrack (multi-object tracking bằng Kalman filter kết hợp ghép cặp IoU), homography 4 điểm (perspective transform), ước lượng vận tốc trên cửa sổ thời gian trượt, kiểm tra điểm trong polygon, máy trạng thái session có grace period để tính thời gian lưu trú.
 
 ---
 
@@ -90,12 +93,20 @@ Sinh viên và kỹ sư Computer Vision học pipeline phát hiện → theo v�
 - ⏯️ **Điều khiển**: Open Video, Start, Pause, Resume, Stop, Export Report, Settings (có phím tắt).
 - ⚙️ **Settings trên UI**: model, GPU/CPU, FP16, confidence, IoU, loại xe, giới hạn tốc độ, 4 điểm phối cảnh, kích thước đường, vạch đếm, đường dẫn đầu ra. Có ảnh xem trước cập nhật ngay khi chỉnh.
 - 💾 **Tự động xuất** video MP4 đã chú thích và báo cáo JSON khi Stop hoặc khi hết video.
+- 🟩 **Giám sát vùng ROI** (tài liệu `docs/docs-engineer/Tai_lieu_ky_thuat_Giam_sat_doi_tuong_trong_vung.md`):
+  - Vẽ nhiều vùng polygon bằng chuột trên frame (thêm điểm, kéo điểm, xóa điểm), đặt tên, chọn lớp theo dõi và ngưỡng lưu trú cho từng vùng.
+  - **Occupancy**: số đối tượng đang ở trong vùng (hiện tại, đỉnh, trung bình), tách riêng với **số lượt vào** tích lũy.
+  - **Dwell time**: mỗi lần vào vùng là một session có `entry_time`, thời gian lưu trú cập nhật liên tục, `exit_time` và thời gian lưu trú cuối cùng.
+  - **Sự kiện** ENTER / EXIT / LOST / OVERSTAY trong tab nhật ký có bộ lọc; cảnh báo quá giờ hiện trên thanh trạng thái, trên frame (box cam, nhãn `OVERSTAY`) và trong bảng đối tượng.
+  - Xuất `regions` trong báo cáo JSON và 2 file CSV: `traffic_report_sessions.csv`, `traffic_report_events.csv`.
 - 🛡️ **Xử lý lỗi thân thiện**: video không tồn tại hoặc hỏng, thiếu model, lỗi codec, cấu hình sai… đều hiện thông báo tiếng Việt, không để lộ traceback cho người dùng.
 - 🔒 **Máy trạng thái**: chặn thao tác sai (Start khi chưa chọn video, Pause khi chưa chạy, Export khi chưa có kết quả…) và giải thích lý do.
 
 | Hiệu chỉnh phối cảnh và vạch đếm | Kết thúc phiên (STOPPED) |
 |---|---|
 | ![Settings - Hiệu chỉnh](docs/images/settings-calibration.jpg) | ![Kết quả sau khi Stop](docs/images/app-stopped.jpg) |
+| **Trình chỉnh vùng ROI** | **Tab Vùng ROI: occupancy và thời gian lưu trú** |
+| ![ROI editor](docs/images/roi-editor.jpg) | ![Tab Vùng ROI](docs/images/roi-panel.jpg) |
 
 ---
 
@@ -104,7 +115,8 @@ Sinh viên và kỹ sư Computer Vision học pipeline phát hiện → theo v�
 ```text
 ┌──────────────────────── UI (PySide6) ──────────────────────────┐
 │ MainWindow · VideoWidget · DashboardWidget · ControlPanel      │
-│ SettingsDialog · VideoWorker (QThread) · ModelWarmupWorker     │
+│ SettingsDialog · ROIEditorDialog · RegionPanel · ObjectTable   │
+│ EventLogWidget · VideoWorker (QThread) · ModelWarmupWorker     │
 └──────────────┬─────────────────────────────────────────────────┘
                │ signals/slots (frame_ready, stats_ready, ...)
 ┌──────────────▼──────────── Pipeline ───────────────────────────┐
@@ -117,13 +129,16 @@ Sinh viên và kỹ sư Computer Vision học pipeline phát hiện → theo v�
 │  ├─ VehicleTracker         ByteTrack + DetectionsSmoother      │
 │  ├─ VehicleCounter         LineZone IN/OUT theo loại xe        │
 │  ├─ SpeedEstimator         homography + deque → km/h           │
-│  └─ SpeedViolationDetector speed > limit                       │
+│  ├─ SpeedViolationDetector speed > limit                       │
+│  ├─ ROIManager             anchor trong polygon + lớp cho phép │
+│  ├─ DwellTimeTracker       session, ENTER/EXIT/LOST/OVERSTAY    │
+│  └─ OccupancyCounter       số đối tượng trong vùng hiện tại    │
 └────────────────────────────────────────────────────────────────┘
- Services: ReportService · VideoService · ConfigService
+ Services: ReportService · VideoService · ConfigService · EventService
  Nền dùng chung: models (dataclass, AppState) · config · constants · utils
 ```
 
-**Pipeline cho mỗi frame:** Frame → Detection → Filtering → Tracking → Counting → Speed Estimation → Violation Detection → Annotation → Statistics → Processed Frame
+**Pipeline cho mỗi frame:** Frame → Detection → Filtering → Tracking → Counting → Speed Estimation → Violation Detection → ROI Membership → Dwell Time → Occupancy → Events → Annotation → Statistics → Processed Frame
 
 **Luồng thread:**
 
@@ -142,13 +157,14 @@ traffic_monitor/
 ├── requirements.txt
 ├── app/
 │   ├── config/                 # settings.py (schema), default_config.json
-│   ├── core/                   # detector, tracker, counter, speed_estimator,
-│   │                           # violation_detector, traffic_monitor, exceptions
-│   ├── models/                 # detection_result, traffic_statistics, violation, app_state
+│   ├── core/                   # detector, tracker, counter, speed_estimator, violation_detector,
+│   │                           # roi_manager, dwell_time_tracker, occupancy_counter, traffic_monitor, exceptions
+│   ├── models/                 # detection_result, traffic_statistics, violation, app_state,
+│   │                           # roi, track_session, event, region_statistics
 │   ├── pipeline/               # frame_processor, video_processor
-│   ├── services/               # report_service, video_service, config_service
-│   ├── ui/                     # main_window, video_widget, dashboard_widget, control_panel,
-│   │                           # settings_dialog, video_worker, styles
+│   ├── services/               # report_service, video_service, config_service, event_service
+│   ├── ui/                     # main_window, video_widget, dashboard_widget, control_panel, settings_dialog,
+│   │                           # roi_editor, region_panel, object_table, event_log_widget, video_worker, styles
 │   ├── utils/                  # display, logger, file_utils, time_utils, geometry, device, qt_compat
 │   └── constants/              # classes (COCO ids, màu), messages (thông báo tiếng Việt)
 ├── models/                     # yolov8n.pt (không commit, xem phần cài đặt)
@@ -157,7 +173,7 @@ traffic_monitor/
 │   └── calibration/            # hiệu chỉnh theo video, ví dụ vehicles.json
 ├── outputs/                    # videos/, reports/, logs/
 ├── docs/                       # traffic_monitor_spec.html (tài liệu thiết kế), images/
-└── tests/                      # 102 test pytest
+└── tests/                      # 154 test pytest
 ```
 
 Hướng phụ thuộc chỉ đi một chiều: `ui → pipeline/services → core → models/constants/utils`. Tầng `core` và `pipeline` không import PySide6, nên kiểm thử được mà không cần giao diện.
@@ -207,12 +223,15 @@ Kiểm tra GPU: `python -c "import torch; print(torch.cuda.is_available(), torch
 3. **Start** (F5): bắt đầu xử lý trên GPU. Video chú thích và dashboard cập nhật liên tục.
 4. **Pause** (F6) / **Resume** (F7): tạm dừng hoặc tiếp tục.
 5. **Stop** (F8): dừng. Video và báo cáo được xuất tự động vào `outputs/`.
-6. **Export Report** (Ctrl+E): lưu báo cáo JSON ra vị trí khác.
+6. **Export Report** (Ctrl+E): lưu báo cáo JSON (kèm 2 file CSV vùng ROI) ra vị trí khác.
+7. **ROI Zones** (Ctrl+R): vẽ và chỉnh vùng giám sát. Click trái để thêm điểm, kéo điểm để di chuyển, click phải để xóa điểm cuối. Đặt mã vùng (ASCII), tên, lớp theo dõi, ngưỡng lưu trú (0 = tắt cảnh báo), grace period và điểm xét trong vùng; tích "Lưu vùng riêng cho video" để gắn vùng với video đang mở.
 
 | Vùng giao diện | Nội dung |
 |---|---|
 | Video | Frame đã chú thích: box, loại xe, confidence, `#ID`, vết di chuyển, km/h, `OVERSPEED`, vạch đếm, IN/OUT, bảng thống kê trong frame |
-| Dashboard | TOTAL IN/OUT, bảng IN/OUT theo loại, Violations, Average/Maximum speed, Speed limit, số xe trong frame, danh sách vi phạm |
+| Tab Giao thông | TOTAL IN/OUT, bảng IN/OUT theo loại, Violations, Average/Maximum speed, Speed limit, số đối tượng trong frame, danh sách vi phạm |
+| Tab Vùng ROI | Theo từng vùng: hiện tại, đỉnh, lượt vào, ra, mất dấu, quá giờ, thời gian lưu trú trung bình. Bảng đối tượng trong vùng: track, lớp, vùng, vào lúc, thời gian lưu trú, trạng thái |
+| Tab Sự kiện | Nhật ký ENTER / EXIT / LOST / OVERSTAY mới nhất ở trên, có bộ lọc theo loại và bộ đếm |
 | Thanh trạng thái | Trạng thái (màu), thông báo, file, GPU, FPS, thời gian xử lý mỗi frame, frame hiện tại/tổng, thanh tiến độ |
 
 ---
@@ -239,6 +258,8 @@ IDLE ──open──▶ VIDEO_SELECTED ──start──▶ RUNNING ◀──re
 | COMPLETED | ✔ | ✔ (chạy lại) | ✘ | ✘ | ✘ | ✔ | ✔ |
 | ERROR | ✔ | ✘ | ✘ | ✘ | ✘ | ✘ | ✔ |
 
+Nút **ROI Zones** có cùng quyền với Settings: chỉ dùng được khi không đang chạy hoặc tạm dừng.
+
 Nút bị chặn hiển thị mờ nhưng vẫn bấm được; khi bấm, thanh trạng thái giải thích lý do. Luật nằm ở `app/models/app_state.py`.
 
 ### 7.2 Các luồng nghiệp vụ
@@ -255,6 +276,10 @@ Nút bị chặn hiển thị mờ nhưng vẫn bấm được; khi bấm, thanh
 | NV8 | Xuất báo cáo | STOPPED / COMPLETED | Export Report → chọn nơi lưu | File JSON mới | Không ghi được: báo lỗi |
 | NV9 | Chạy lại | STOPPED / COMPLETED | Start → reset thống kê → chạy lại từ đầu | RUNNING | – |
 | NV10 | Đóng ứng dụng | Bất kỳ | Dừng worker, chờ thread kết thúc | Thoát sạch, file video hợp lệ | – |
+| NV11 | Cấu hình vùng ROI | Không đang chạy | ROI Zones → vẽ polygon trên frame → đặt tên, lớp, ngưỡng → Save | Lưu `data/calibration/<video>.json` (hoặc `user_config.json`), xem trước cập nhật | Polygon dưới 3 điểm, cạnh cắt nhau, mã trùng: chọn vùng lỗi, báo lý do, không lưu. Chưa mở video: không vẽ được |
+| NV12 | Giám sát vùng khi chạy | RUNNING | Mỗi frame: anchor trong vùng → session → occupancy → sự kiện | Tab Vùng ROI và Sự kiện cập nhật, nhãn `zone_a 3.2s` trên xe | Vùng nằm ngoài khung hình video mới: tự tắt vùng đó và cảnh báo |
+| NV13 | Cảnh báo quá giờ | Session đang mở | Thời gian lưu trú vượt `max_dwell_seconds` | 1 sự kiện OVERSTAY mỗi session, cảnh báo trên thanh trạng thái, box cam | – |
+| NV14 | Xuất kết quả vùng | STOPPED / COMPLETED | Tự động khi Stop / hết video, hoặc Export Report | `regions` trong JSON, `*_sessions.csv`, `*_events.csv` (UTF-8 BOM, mở trực tiếp bằng Excel) | – |
 
 ---
 
@@ -269,6 +294,13 @@ Nút bị chặn hiển thị mờ nhưng vẫn bấm được; khi bấm, thanh
 | Tốc độ | `v = ‖P_cuối − P_đầu‖ ÷ ((f_cuối − f_đầu) ÷ fps) × 3.6` trên `deque(maxlen = fps × window_seconds)`, cần tối thiểu `min_samples` điểm; **không** tính từ 2 frame liên tiếp |
 | Vi phạm | `speed > limit` (bằng giới hạn thì không tính). Mỗi xe có 1 bản ghi, cập nhật `max_speed_kmh` |
 | Tốc độ trung bình | Trung bình của tốc độ gần nhất của từng xe trong phiên |
+| Trong vùng ROI | Anchor (`bottom_center` mặc định, hoặc `center`) nằm **trong hoặc trên biên** polygon **và** lớp được vùng cho phép. Các vùng độc lập: một đối tượng có thể thuộc nhiều vùng chồng lấn |
+| Thời gian | Thời gian media = `frame_index ÷ fps`, nên đồng hồ dừng khi Pause |
+| Vào vùng | Track chuyển từ ngoài vào trong: mở session, `entry_time` = thời điểm hiện tại, sự kiện ENTER |
+| Lưu trú | `dwell = now − entry_time` khi còn trong vùng; `T_dwell = T_exit − T_entry` khi đã ra |
+| Ra vùng | Ở ngoài (hoặc không thấy) lâu hơn `grace_seconds` (mặc định 1 s) thì đóng session, `exit_time` = lần cuối thấy trong vùng. Đã thấy ở ngoài thì là **EXIT**; biến mất ngay khi đang trong vùng thì là **LOST**. Rời vùng rồi quay lại sau grace thì là session mới; hai `track_id` khác nhau không bao giờ bị gộp |
+| Quá giờ | `dwell > max_dwell_seconds` (0 = tắt): 1 sự kiện OVERSTAY cho mỗi session |
+| Occupancy | Số `track_id` duy nhất có session đang mở trong vùng tại frame hiện tại; khác với số lượt vào (ENTER) |
 
 ---
 
@@ -287,6 +319,8 @@ Cấu hình mặc định nằm ở `app/config/default_config.json`. Khi bấm 
 | `perspective.source_points` | `[[1252,787],[2298,803],[5039,2159],[-550,2159]]` | 4 điểm A, B, C, D (pixel gốc) |
 | `perspective.road_width_m` / `road_length_m` | `25` / `250` | Kích thước thực của vùng ABCD |
 | `counting_line.start` / `end` | `[0,1500]` / `[3840,1500]` | Vạch đếm (pixel gốc) |
+| `regions.enabled` / `anchor` / `grace_seconds` | `true` / `bottom_center` / `1.0` | Bật giám sát vùng, điểm xét, thời gian chờ trước khi tính là đã ra |
+| `regions.zones[]` | `zone_a`, `zone_b` (2 chiều đường của video mẫu, ngưỡng 4 s để minh họa) | `roi_id` (ASCII), `name`, `polygon` (pixel gốc), `allowed_classes` (rỗng = mọi lớp), `max_dwell_seconds` |
 | `processing.max_width` | `1920` | Frame rộng hơn mức này được thu nhỏ trước khi xử lý; tọa độ được scale tự động |
 | `output.*` | `outputs/...` | Đường dẫn video, báo cáo, log |
 
@@ -297,6 +331,8 @@ Cấu hình mặc định nằm ở `app/config/default_config.json`. Khi bấm 
 ```text
 outputs/videos/traffic_result.mp4     video đã chú thích (codec mp4v; nếu không được thì avc1, XVID, MJPG)
 outputs/reports/traffic_report.json   báo cáo
+outputs/reports/traffic_report_sessions.csv   session vùng ROI: vùng, track, lớp, vào, ra, lưu trú, trạng thái
+outputs/reports/traffic_report_events.csv     sự kiện ENTER / EXIT / LOST / OVERSTAY
 outputs/logs/app.log                  log (xoay vòng 5 MB × 3)
 ```
 
@@ -329,14 +365,30 @@ Ví dụ `traffic_report.json`:
 }
 ```
 
-Năm khóa bắt buộc (`video`, `total_in`, `total_out`, `by_class`, `speed_violations`) luôn đứng đầu báo cáo.
+Năm khóa bắt buộc (`video`, `total_in`, `total_out`, `by_class`, `speed_violations`) luôn đứng đầu báo cáo. Khi bật giám sát vùng, báo cáo có thêm mục `regions`:
+
+```json
+"regions": {
+    "time_base": "media_seconds",
+    "anchor": "bottom_center",
+    "grace_seconds": 1.0,
+    "zones": [{ "roi_id": "zone_a", "name": "Làn chiều về (trái)", "occupancy": 2, "peak_occupancy": 8,
+                "entries": 15, "exits": 13, "lost": 0, "overstays": 2, "average_dwell_seconds": 1.6,
+                "polygon": [[1194, 990], [1686, 990], [1716, 1950], [338, 1950]], "max_dwell_seconds": 4.0 }],
+    "sessions": [{ "session_id": 1, "track_id": 18, "class_name": "car", "roi_id": "zone_a",
+                   "entry_time": 12.4, "last_seen_time": 18.7, "exit_time": 18.7, "dwell_seconds": 6.3,
+                   "status": "exited", "overstay": true, "roi_name": "Làn chiều về (trái)" }],
+    "events": [{ "event_id": "event-0001", "track_id": 18, "roi_id": "zone_a", "event_type": "ENTER",
+                 "timestamp": 12.4, "class_name": "car", "dwell_seconds": null, "roi_name": "Làn chiều về (trái)" }]
+}
+```
 
 ---
 
 ## 11. Kiểm thử
 
 ```bash
-python -m pytest                              # toàn bộ 102 test (~1 phút trên GPU)
+python -m pytest                              # toàn bộ 154 test (~3 phút trên GPU)
 python -m pytest -m "not gpu and not ui"      # chỉ chạy test nhanh, không cần GPU
 ```
 
@@ -353,12 +405,18 @@ python -m pytest -m "not gpu and not ui"      # chỉ chạy test nhanh, không 
 | `test_report.py` | Cấu trúc báo cáo JSON, tự tạo thư mục khi xuất |
 | `test_state.py` | Luật chuyển trạng thái và thông báo chặn |
 | `test_ui_flows.py` | **10 luồng nghiệp vụ end-to-end** trên MainWindow thật |
+| `test_roi_membership.py` | Điểm trên biên tính là trong vùng, polygon lõm, polygon không hợp lệ, anchor `bottom_center`/`center`, lọc lớp, vùng chồng lấn |
+| `test_occupancy.py` | Occupancy hiện tại, đỉnh, trung bình; occupancy khác số lượt vào; EventService |
+| `test_dwell_time.py` | ENTER, dwell, EXIT sau grace, nhiễu ở biên, LOST khi mất track, vào lại thì là session mới, OVERSTAY 1 lần, thời gian media, đúng định dạng JSON tài liệu |
+| `test_ui_roi_flows.py` | Vẽ vùng bằng chuột (click, kéo, click phải), lưu theo video, từ chối vùng lỗi, xóa/tắt vùng, chặn khi đang chạy, **chạy GPU** và kiểm tra tab Vùng ROI, nhật ký, JSON, CSV |
 
 ---
 
 ## 12. Hiệu năng và ghi chú kỹ thuật
 
-- **Hiệu năng** (GeForce MX570 2 GB, video 4K xử lý ở 1920 px, YOLOv8n FP16): khoảng 12 fps khi chạy pipeline không UI, khoảng 8–11 fps khi chạy trong ứng dụng.
+- **Hiệu năng** (GeForce MX570 2 GB, video 4K xử lý ở 1920 px, YOLOv8n FP16): khoảng 9–12 fps khi chạy pipeline không UI, khoảng 6–11 fps khi chạy trong ứng dụng. Giám sát 2 vùng ROI thêm khoảng 7 ms mỗi frame.
+- **Nhãn vùng trên frame** dùng `roi_id` (ASCII); tên tiếng Việt chỉ hiển thị trong UI và báo cáo.
+- **Độ trễ do làm mượt:** `DetectionsSmoother` lấy trung bình 5 box, nên thời điểm vào/ra vùng trễ khoảng 2 frame so với box thô; thời gian lưu trú không bị ảnh hưởng.
 - **Đa luồng I/O:** đọc và ghi video chạy ở 2 luồng riêng, nối với nhau bằng queue có giới hạn, nên video không bao giờ bị nạp toàn bộ vào RAM.
 - **Cache model:** YOLO chỉ được tải một lần cho mỗi tiến trình. Việc khởi động GPU chạy ở nền ngay khi mở app, nên frame đầu tiên xuất hiện khoảng 0,7 giây sau khi bấm Start.
 - **PySide6 và torch:** `app/ui/__init__.py` nạp torch/ultralytics trước PySide6 và thay hàm kiểm tra import của PySide6 (`app/utils/qt_compat.py`). Nếu không, lần tải YOLO đầu tiên trong QThread mất hơn 30 giây.

@@ -1,8 +1,8 @@
 {
     "model": {
         "path": "models/yolov8n.pt",
-        "confidence": 0.30,
-        "iou": 0.70,
+        "confidence": 0.3,
+        "iou": 0.7,
         "device": "cuda:0",
         "half": true,
         "imgsz": 640
@@ -26,7 +26,12 @@
         "stale_seconds": 2.0
     },
     "perspective": {
-        "source_points": [[1252, 787], [2298, 803], [5039, 2159], [-550, 2159]],
+        "source_points": [
+            [1252, 787],
+            [2298, 803],
+            [5039, 2159],
+            [-550, 2159]
+        ],
         "road_width_m": 25,
         "road_length_m": 250
     },
@@ -42,5 +47,47 @@
     "processing": {
         "max_width": 1920,
         "queue_size": 8
+    },
+    "regions": {
+        "enabled": true,
+        "anchor": "bottom_center",
+        "grace_seconds": 1.0,
+        "zones": [
+            {
+                "roi_id": "zone_a",
+                "name": "Làn chiều về (trái)",
+                "polygon": [
+                    [1194, 990],
+                    [1686, 990],
+                    [1716, 1950],
+                    [338, 1950]
+                ],
+                "allowed_classes": [
+                    "car",
+                    "motorcycle",
+                    "bus",
+                    "truck"
+                ],
+                "max_dwell_seconds": 4.0
+            },
+            {
+                "roi_id": "zone_b",
+                "name": "Làn chiều đi (phải)",
+                "polygon": [
+                    [1920, 990],
+                    [2460, 990],
+                    [3840, 1800],
+                    [3840, 1950],
+                    [2697, 1950]
+                ],
+                "allowed_classes": [
+                    "car",
+                    "motorcycle",
+                    "bus",
+                    "truck"
+                ],
+                "max_dwell_seconds": 4.0
+            }
+        ]
     }
 }
