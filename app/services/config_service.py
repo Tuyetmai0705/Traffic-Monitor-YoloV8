@@ -9,6 +9,7 @@ from typing import Any
 from app.config.settings import DEFAULT_CONFIG_PATH, USER_CONFIG_PATH, AppConfig, deep_merge
 from app.constants.classes import OBJECT_CLASSES
 from app.core.exceptions import InvalidConfigError, OutputPathError
+from app.core.tracker import SMOOTHING_MODES
 from app.utils.file_utils import CALIBRATION_DIR, ensure_parent_dir, format_json, resolve_path
 from app.models.roi import ANCHORS
 from app.utils.geometry import validate_line, validate_polygon, validate_quadrilateral
@@ -78,6 +79,7 @@ class ConfigService:
         self._validate_output(config)
         self._validate_ui(config)
         self._validate_regions(config)
+        self._validate_annotation(config)
 
     def calibration_path(self, video_path: str | Path) -> Path:
         """Return the calibration file used for a video."""
@@ -147,6 +149,7 @@ class ConfigService:
         device = str(model.device).lower()
         self._require(device == "cpu" or device.startswith("cuda"), "model.device", "chỉ nhận 'cpu' hoặc 'cuda:N'")
         self._require(isinstance(model.half, bool), "model.half", "phải là true/false")
+        self._require(isinstance(model.agnostic_nms, bool), "model.agnostic_nms", "phải là true/false")
         self._require(160 <= model.imgsz <= 1920 and model.imgsz % 32 == 0, "model.imgsz", "bội số của 32, từ 160 đến 1920")
 
     def _validate_classes(self, config: AppConfig) -> None:
@@ -161,6 +164,13 @@ class ConfigService:
         self._require(0.0 < tracker.minimum_matching_threshold <= 1.0, "tracker.minimum_matching_threshold", "trong khoảng (0, 1]")
         self._require(tracker.minimum_consecutive_frames >= 1, "tracker.minimum_consecutive_frames", "phải ≥ 1")
         self._require(tracker.smoother_length >= 1, "tracker.smoother_length", "phải ≥ 1")
+        self._require(tracker.smoothing in SMOOTHING_MODES, "tracker.smoothing", f"chỉ nhận {', '.join(SMOOTHING_MODES)}")
+        self._require(1 <= tracker.min_hits <= 30, "tracker.min_hits", "phải từ 1 đến 30")
+        self._require(0.1 <= tracker.kalman_measurement_scale <= 20, "tracker.kalman_measurement_scale", "phải từ 0.1 đến 20")
+        self._require(1 <= tracker.class_vote_window <= 300, "tracker.class_vote_window", "phải từ 1 đến 300")
+        self._require(0.5 <= tracker.kalman_size_scale <= 10, "tracker.kalman_size_scale", "phải từ 0.5 đến 10")
+        self._require(0 <= tracker.coast_frames <= 50, "tracker.coast_frames", "phải từ 0 đến 50 frame")
+        self._require(0 <= tracker.stitch_frames <= 100, "tracker.stitch_frames", "phải từ 0 đến 100 frame")
 
     def _validate_geometry(self, config: AppConfig) -> None:
         try:
@@ -180,6 +190,12 @@ class ConfigService:
         self._require(0.2 <= speed.window_seconds <= 5.0, "speed.window_seconds", "phải từ 0.2 đến 5 giây")
         self._require(speed.min_samples >= 2, "speed.min_samples", "phải ≥ 2")
         self._require(speed.stale_seconds > 0, "speed.stale_seconds", "phải > 0")
+        self._require(speed.max_kmh > speed.limit_kmh, "speed.max_kmh", "phải lớn hơn giới hạn tốc độ")
+        self._require(0.05 <= speed.smoothing_alpha <= 1.0, "speed.smoothing_alpha", "phải từ 0.05 đến 1")
+        self._require(1 <= speed.violation_confirm_samples <= 50, "speed.violation_confirm_samples", "phải từ 1 đến 50")
+        self._require(0 <= speed.min_pixel_travel <= 500, "speed.min_pixel_travel", "phải từ 0 đến 500 px")
+        self._require(0.05 <= speed.max_half_window_difference <= 1.0, "speed.max_half_window_difference", "phải từ 0.05 đến 1")
+        self._require(0.05 <= speed.max_metres_per_pixel <= 10, "speed.max_metres_per_pixel", "phải từ 0.05 đến 10 m/px")
 
     def _validate_output(self, config: AppConfig) -> None:
         output = config.output
@@ -191,6 +207,7 @@ class ConfigService:
         regions = config.regions
         self._require(regions.anchor in ANCHORS, "regions.anchor", f"chỉ nhận {', '.join(ANCHORS)}")
         self._require(0.0 <= regions.grace_seconds <= 10.0, "regions.grace_seconds", "phải từ 0 đến 10 giây")
+        self._require(1 <= regions.min_confirm_frames <= 50, "regions.min_confirm_frames", "phải từ 1 đến 50 frame")
         self._require(len(regions.zones) <= MAX_ZONES, "regions.zones", f"tối đa {MAX_ZONES} vùng")
         seen: set[str] = set()
         known = set(OBJECT_CLASSES.values())
@@ -208,6 +225,13 @@ class ConfigService:
             unknown = set(zone.allowed_classes) - known
             self._require(not unknown, f"{field}.allowed_classes", f"lớp không hỗ trợ: {sorted(unknown)}")
             self._require(0.0 <= zone.max_dwell_seconds <= 86400, f"{field}.max_dwell_seconds", "phải từ 0 (tắt) đến 86400 giây")
+
+    def _validate_annotation(self, config: AppConfig) -> None:
+        annotation = config.annotation
+        self._require(8 <= annotation.label_font_px <= 120, "annotation.label_font_px", "phải từ 8 đến 120 px")
+        self._require(8 <= annotation.panel_font_px <= 120, "annotation.panel_font_px", "phải từ 8 đến 120 px")
+        if annotation.font_path:
+            self._require(resolve_path(annotation.font_path).is_file(), "annotation.font_path", f"không tìm thấy {annotation.font_path}")
 
     def _validate_ui(self, config: AppConfig) -> None:
         self._require(50 <= config.ui.dashboard_refresh_ms <= 2000, "ui.dashboard_refresh_ms", "phải từ 50 đến 2000 ms")

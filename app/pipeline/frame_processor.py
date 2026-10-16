@@ -14,11 +14,20 @@ from app.core.traffic_monitor import TrafficMonitor
 from app.models.detection_result import DetectionResult
 from app.models.traffic_statistics import TrafficStatistics
 from app.services.event_service import EventService
-from app.utils.display import build_overlay_lines, draw_regions, draw_text_panel
+from app.utils.display import (
+    TextStyle,
+    build_overlay_lines,
+    draw_box_labels,
+    draw_line_counts,
+    draw_regions,
+    draw_text_panel,
+    hex_to_bgr,
+)
 from app.utils.time_utils import frame_to_timestamp
 
 _EMA = 0.1
 _RECENT_EVENTS = 300
+_WHITE = (255, 255, 255)
 
 
 def _class_palette() -> sv.ColorPalette:
@@ -38,38 +47,23 @@ class FrameProcessor:
         video_info: sv.VideoInfo,
         event_service: EventService | None = None,
     ) -> None:
-        """Create annotators scaled to the video resolution."""
+        """Create annotators and the text style scaled to the video resolution."""
         self._monitor = monitor
         self._events = event_service or EventService()
         self._fps = video_info.fps
-        resolution = video_info.resolution_wh
-        thickness = sv.calculate_optimal_line_thickness(resolution)
-        text_scale = sv.calculate_optimal_text_scale(resolution)
+        thickness = max(1, sv.calculate_optimal_line_thickness(video_info.resolution_wh) - 1)
         palette = _class_palette()
-        violation = sv.Color.from_hex(VIOLATION_COLOR)
+        self._style = TextStyle.for_frame(config.annotation, video_info.height)
         self._box = sv.BoxAnnotator(color=palette, thickness=thickness, color_lookup=sv.ColorLookup.CLASS)
-        self._violation_box = sv.BoxAnnotator(color=violation, thickness=thickness * 2)
-        self._label = sv.LabelAnnotator(
-            color=palette, text_scale=text_scale, text_thickness=thickness, text_color=sv.Color.BLACK,
-            text_position=sv.Position.TOP_LEFT, color_lookup=sv.ColorLookup.CLASS, smart_position=True,
-        )
-        self._violation_label = sv.LabelAnnotator(
-            color=violation, text_scale=text_scale, text_thickness=thickness, text_color=sv.Color.WHITE,
-            text_position=sv.Position.BOTTOM_LEFT, smart_position=True,
-        )
-        overstay = sv.Color.from_hex(OVERSTAY_COLOR)
-        self._overstay_box = sv.BoxAnnotator(color=overstay, thickness=thickness * 2)
-        self._overstay_label = sv.LabelAnnotator(
-            color=overstay, text_scale=text_scale, text_thickness=thickness, text_color=sv.Color.BLACK,
-            text_position=sv.Position.BOTTOM_LEFT, smart_position=True,
-        )
+        self._violation_box = sv.BoxAnnotator(color=sv.Color.from_hex(VIOLATION_COLOR), thickness=thickness * 2)
+        self._overstay_box = sv.BoxAnnotator(color=sv.Color.from_hex(OVERSTAY_COLOR), thickness=thickness * 2)
         self._trace = sv.TraceAnnotator(
             color=palette, thickness=thickness, trace_length=max(10, round(video_info.fps * 2)),
-            position=sv.Position.BOTTOM_CENTER, color_lookup=sv.ColorLookup.CLASS,
+            position=sv.Position.CENTER, color_lookup=sv.ColorLookup.CLASS,
         )
+        # Counts are drawn by draw_line_counts with the configured font.
         self._line = sv.LineZoneAnnotator(
-            thickness=thickness, color=sv.Color.from_hex(LINE_COLOR), text_thickness=thickness,
-            text_scale=text_scale, text_color=sv.Color.BLACK,
+            thickness=thickness, color=sv.Color.from_hex(LINE_COLOR), display_in_count=False, display_out_count=False,
         )
         self._processing_ms = 0.0
         self._last_stats = TrafficStatistics(by_class=monitor.get_statistics().by_class)
@@ -107,39 +101,51 @@ class FrameProcessor:
         """Draw regions, traces, boxes, labels, alerts, counting line and overlays."""
         detections = result.detections
         regions = result.statistics.regions
+        style = self._style
         if self._monitor.roi_manager is not None:
             draw_regions(
-                frame, self._monitor.roi_manager.zones,
+                frame, self._monitor.roi_manager.zones, style,
                 occupancy={r.roi_id: r.occupancy for r in regions},
                 alerts={r.roi_id: sum(s.overstay for s in r.active_sessions) for r in regions},
             )
         frame = self._trace.annotate(frame, detections)
         frame = self._box.annotate(frame, detections)
-        frame = self._label.annotate(frame, detections, labels=self._labels(result))
+
         overstaying = self._overstaying(result)
         speeding = {int(t) for t in result.violating_ids}
         amber_only = {tid: ids for tid, ids in overstaying.items() if tid not in speeding}
         if amber_only:
-            mask = np.isin(detections.tracker_id, list(amber_only))
-            flagged = detections[mask]
+            flagged = detections[np.isin(detections.tracker_id, list(amber_only))]
             frame = self._overstay_box.annotate(frame, flagged)
-            frame = self._overstay_label.annotate(
-                frame, flagged, labels=[f"OVERSTAY {amber_only[int(t)]}" for t in flagged.tracker_id]
-            )
-        if result.violating_ids:
-            mask = np.isin(detections.tracker_id, list(result.violating_ids))
-            flagged = detections[mask]
+        if speeding:
+            flagged = detections[np.isin(detections.tracker_id, list(speeding))]
             frame = self._violation_box.annotate(frame, flagged)
-            labels = [
-                f"OVERSPEED + OVERSTAY {overstaying[int(t)]}" if int(t) in overstaying else "OVERSPEED"
-                for t in flagged.tracker_id
-            ]
-            frame = self._violation_label.annotate(frame, flagged, labels=labels)
-        frame = self._line.annotate(frame, line_counter=self._monitor.counter.line_zone)
+
+        colors = [hex_to_bgr(CLASS_COLORS.get(int(c), "#FFFFFF")) for c in detections.class_id]
+        draw_box_labels(frame, detections.xyxy, self._labels(result), colors, style)
+        alerts, alert_boxes, alert_colors, alert_text = [], [], [], []
+        for box, tracker_id in zip(detections.xyxy, detections.tracker_id):
+            tid = int(tracker_id)
+            if tid in speeding:
+                alerts.append(f"OVERSPEED + OVERSTAY {overstaying[tid]}" if tid in overstaying else "OVERSPEED")
+                alert_colors.append(hex_to_bgr(VIOLATION_COLOR))
+            elif tid in amber_only:
+                alerts.append(f"OVERSTAY {amber_only[tid]}")
+                alert_colors.append(hex_to_bgr(OVERSTAY_COLOR))
+            else:
+                continue
+            alert_boxes.append(box)
+        if alerts:
+            draw_box_labels(frame, np.array(alert_boxes), alerts, alert_colors, style, text_color=_WHITE, below=True)
+
+        line_zone = self._monitor.counter.line_zone
+        frame = self._line.annotate(frame, line_counter=line_zone)
+        start, end = line_zone.vector.start, line_zone.vector.end
+        draw_line_counts(frame, (start.x, start.y), (end.x, end.y), line_zone.in_count, line_zone.out_count, style)
         stats = replace(result.statistics, fps=self._last_stats.fps)
-        draw_text_panel(frame, build_overlay_lines(stats, self._monitor.speed_limit), anchor="top-left")
-        timestamp = f"{frame_to_timestamp(result.frame_index, self._fps)}  f{result.frame_index}"
-        draw_text_panel(frame, [(timestamp, (240, 235, 231))], anchor="top-right")
+        draw_text_panel(frame, build_overlay_lines(stats, self._monitor.speed_limit), style, anchor="top-left")
+        timestamp = f"{frame_to_timestamp(result.frame_index, self._fps)}   f{result.frame_index}"
+        draw_text_panel(frame, [(timestamp, (240, 235, 231))], style, anchor="top-right")
         return frame
 
     def set_fps(self, fps: float) -> None:

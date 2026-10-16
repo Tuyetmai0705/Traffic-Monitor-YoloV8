@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -448,7 +449,7 @@ class MainWindow(QMainWindow):
         line = self._run_config.counting_line
         regions = self._run_config.regions
         canvas = draw_calibration(self._preview_frame, line.start, line.end, self._run_config.perspective.source_points,
-                                  regions.zones if regions.enabled else ())
+                                  regions.zones if regions.enabled else (), self._run_config.annotation)
         self.video_widget.show_frame(to_qimage(resize_to_width(canvas, self._run_config.ui.display_max_width)))
 
     def _show_regions(self) -> None:
@@ -524,6 +525,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt override)
         """Stop the worker cleanly before closing."""
+        # Diagnostics for issue #7 (unexpected exits): spontaneous = the window system
+        # sent the close (title-bar X, Alt+F4, OS); otherwise code called close().
+        logger.info(
+            "Close requested: spontaneous=%s, state=%s, frame=%s\n%s",
+            event.spontaneous(), self._state.value, self._processed_frames(),
+            "".join(traceback.format_stack(limit=12)),
+        )
         if self._worker is not None:
             self._worker.stop()
         for thread in (self._thread, self._warmup_thread):

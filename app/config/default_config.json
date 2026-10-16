@@ -5,7 +5,8 @@
         "iou": 0.7,
         "device": "cuda:0",
         "half": true,
-        "imgsz": 640
+        "imgsz": 640,
+        "agnostic_nms": true
     },
     "classes": [2, 3, 5, 7],
     "tracker": {
@@ -13,7 +14,14 @@
         "lost_track_buffer": 30,
         "minimum_matching_threshold": 0.8,
         "minimum_consecutive_frames": 1,
-        "smoother_length": 5
+        "smoother_length": 5,
+        "smoothing": "kalman",
+        "min_hits": 3,
+        "kalman_measurement_scale": 6.0,
+        "kalman_size_scale": 2.5,
+        "coast_frames": 8,
+        "stitch_frames": 15,
+        "class_vote_window": 30
     },
     "counting_line": {
         "start": [0, 1500],
@@ -23,7 +31,13 @@
         "limit_kmh": 80,
         "window_seconds": 1.0,
         "min_samples": 12,
-        "stale_seconds": 2.0
+        "stale_seconds": 2.0,
+        "max_kmh": 250,
+        "smoothing_alpha": 0.3,
+        "violation_confirm_samples": 5,
+        "min_pixel_travel": 20,
+        "max_half_window_difference": 0.25,
+        "max_metres_per_pixel": 0.8
     },
     "perspective": {
         "source_points": [
@@ -32,8 +46,8 @@
             [5039, 2159],
             [-550, 2159]
         ],
-        "road_width_m": 25,
-        "road_length_m": 250
+        "road_width_m": 27.3,
+        "road_length_m": 270
     },
     "output": {
         "video_path": "outputs/videos/traffic_result.mp4",
@@ -50,17 +64,18 @@
     },
     "regions": {
         "enabled": true,
-        "anchor": "bottom_center",
+        "anchor": "center",
         "grace_seconds": 1.0,
+        "min_confirm_frames": 3,
         "zones": [
             {
                 "roi_id": "zone_a",
                 "name": "Làn chiều về (trái)",
                 "polygon": [
-                    [1194, 990],
-                    [1686, 990],
-                    [1716, 1950],
-                    [338, 1950]
+                    [1091, 990],
+                    [1688, 990],
+                    [1719, 1650],
+                    [324, 1650]
                 ],
                 "allowed_classes": [
                     "car",
@@ -89,5 +104,11 @@
                 "max_dwell_seconds": 4.0
             }
         ]
+    },
+    "annotation": {
+        "font_family": "Times New Roman",
+        "font_path": "",
+        "label_font_px": 26,
+        "panel_font_px": 19
     }
 }

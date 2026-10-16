@@ -80,7 +80,7 @@ def _region_report(tmp_path: Path):
     from app.services.report_service import csv_paths
 
     zone = ROI("zone_a", "Khu vực A", [[100, 100], [400, 100], [450, 350], [80, 350]], ["person"], 300)
-    regions = RegionsConfig(enabled=True, anchor="bottom_center", grace_seconds=1.0, zones=[zone])
+    regions = RegionsConfig(enabled=True, anchor="bottom_center", grace_seconds=1.0, min_confirm_frames=3, zones=[zone])
     sessions = [
         TrackSession(1, 18, "person", "zone_a", 12.4, 18.7, 18.7, 6.3, SessionStatus.EXITED),
         TrackSession(2, 21, "person", "zone_a", 20.0, 25.0, None, 5.0, SessionStatus.INSIDE),
@@ -127,7 +127,7 @@ def test_no_region_section_when_disabled(tmp_path: Path) -> None:
     from app.config.settings import RegionsConfig
     from app.services.report_service import csv_paths
 
-    report = ReportService().build_report(_stats(), META, regions_config=RegionsConfig(False, "center", 1.0, []))
+    report = ReportService().build_report(_stats(), META, regions_config=RegionsConfig(False, "center", 1.0, 3, []))
     assert "regions" not in report
     path = ReportService().export(report, tmp_path / "r.json")
     assert not any(p.exists() for p in csv_paths(path))

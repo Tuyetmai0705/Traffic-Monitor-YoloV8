@@ -29,7 +29,12 @@ class _Visit:
 class DwellTimeTracker:
     """Turn per-frame membership into ENTER / EXIT / LOST / OVERSTAY events.
 
-    * A track entering a region opens a session at the current media time.
+    * A track must be inside for ``min_confirm_frames`` consecutive frames
+      before ENTER is emitted (filters one-frame boxes and ID-switch noise).
+      The entry time is still the first of those frames.
+    * Occupancy counts open sessions whose object has not been seen outside,
+      so a vehicle that already left but is within the grace period no
+      longer inflates the count.
     * While inside, ``dwell = now - entry_time``. During the grace period the
       dwell stays at the last time the object was confirmed inside, so a
       closed session always ends with ``T_exit - T_entry``.
@@ -42,12 +47,15 @@ class DwellTimeTracker:
     * Leaving and coming back after the grace period starts a new session.
     """
 
-    def __init__(self, zones: Sequence[ROI], grace_seconds: float) -> None:
-        """Track sessions for ``zones`` with an exit grace period in seconds."""
+    def __init__(self, zones: Sequence[ROI], grace_seconds: float, min_confirm_frames: int = 1) -> None:
+        """Track sessions for ``zones`` with an exit grace period and an entry confirmation."""
         if grace_seconds < 0:
             raise ValueError("grace_seconds phải ≥ 0")
+        if min_confirm_frames < 1:
+            raise ValueError("min_confirm_frames phải ≥ 1")
         self._zones = {zone.roi_id: zone for zone in zones}
         self._grace = grace_seconds
+        self._confirm = min_confirm_frames
         self.reset()
 
     @property
@@ -74,18 +82,28 @@ class DwellTimeTracker:
                     continue
                 tid = int(tid)
                 inside_now.add(tid)
-                events.extend(self._mark_inside(zone, tid, str(name), timestamp))
+                if (roi_id, tid) in self._open or self._confirmed(roi_id, tid, timestamp):
+                    events.extend(self._mark_inside(zone, tid, str(name), timestamp))
+            for key in [k for k in self._pending if k[0] == roi_id and k[1] not in inside_now]:
+                del self._pending[key]                           # must be consecutive
             events.extend(self._close_expired(roi_id, inside_now, visible, timestamp))
         return events
 
-    def get_active_sessions(self, roi_id: str | None = None) -> list[TrackSession]:
-        """Open sessions (status inside), optionally for one region, oldest first."""
-        visits = [v for v in self._open.values() if roi_id is None or v.roi_id == roi_id]
+    def get_active_sessions(self, roi_id: str | None = None, include_leaving: bool = False) -> list[TrackSession]:
+        """Open sessions, optionally for one region, oldest first.
+
+        By default sessions whose object was already seen outside (waiting for
+        the grace period to close them) are left out, matching occupancy.
+        """
+        visits = [
+            v for v in self._open.values()
+            if (roi_id is None or v.roi_id == roi_id) and (include_leaving or not v.seen_outside)
+        ]
         return [self._snapshot(v) for v in sorted(visits, key=lambda v: v.session_id)]
 
     def get_sessions(self) -> list[TrackSession]:
         """Every session of the run (closed and open), in entry order."""
-        sessions = self._closed + self.get_active_sessions()
+        sessions = self._closed + self.get_active_sessions(include_leaving=True)
         return sorted(sessions, key=lambda session: session.session_id)
 
     def get_closed_sessions(self, roi_id: str | None = None) -> list[TrackSession]:
@@ -97,10 +115,11 @@ class DwellTimeTracker:
         return dict(self._counts[roi_id])
 
     def get_open_track_ids(self) -> dict[str, set[int]]:
-        """``{roi_id: {track ids inside}}`` for occupancy."""
+        """``{roi_id: {track ids inside}}`` for occupancy (objects seen outside excluded)."""
         result: dict[str, set[int]] = {roi_id: set() for roi_id in self._zones}
-        for roi_id, track_id in self._open:
-            result[roi_id].add(track_id)
+        for (roi_id, track_id), visit in self._open.items():
+            if not visit.seen_outside:
+                result[roi_id].add(track_id)
         return result
 
     def get_dwell(self, roi_id: str, track_id: int) -> float | None:
@@ -116,23 +135,37 @@ class DwellTimeTracker:
     def reset(self) -> None:
         """Forget every session and counter."""
         self._open: dict[tuple[str, int], _Visit] = {}
+        self._pending: dict[tuple[str, int], tuple[float, int]] = {}  # first time inside, consecutive frames
         self._closed: list[TrackSession] = []
         self._counts = {roi_id: {"entries": 0, "exits": 0, "lost": 0, "overstays": 0} for roi_id in self._zones}
+        self._entry_time: dict[tuple[str, int], float] = {}
         self._next_session = 1
         self._next_event = 1
         self._now = 0.0
 
     # ------------------------------------------------------------------ helpers
+    def _confirmed(self, roi_id: str, track_id: int, timestamp: float) -> bool:
+        """Count consecutive inside frames; True once ``min_confirm_frames`` is reached."""
+        first, frames = self._pending.get((roi_id, track_id), (timestamp, 0))
+        frames += 1
+        if frames >= self._confirm:
+            self._pending.pop((roi_id, track_id), None)
+            self._entry_time[(roi_id, track_id)] = first
+            return True
+        self._pending[(roi_id, track_id)] = (first, frames)
+        return False
+
     def _mark_inside(self, zone: ROI, track_id: int, class_name: str, timestamp: float) -> list[RegionEvent]:
         events: list[RegionEvent] = []
         key = (zone.roi_id, track_id)
         visit = self._open.get(key)
         if visit is None:
-            visit = _Visit(self._next_session, track_id, class_name, zone.roi_id, timestamp, timestamp)
+            entry = self._entry_time.pop(key, timestamp)
+            visit = _Visit(self._next_session, track_id, class_name, zone.roi_id, entry, timestamp)
             self._next_session += 1
             self._open[key] = visit
             self._counts[zone.roi_id]["entries"] += 1
-            events.append(self._event(visit, EventType.ENTER, timestamp))
+            events.append(self._event(visit, EventType.ENTER, entry))
         visit.last_seen_time = timestamp
         visit.class_name = class_name
         visit.seen_outside = False

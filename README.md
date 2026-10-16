@@ -6,7 +6,7 @@
 ![PyTorch CUDA](https://img.shields.io/badge/PyTorch-CUDA%20GPU-EE4C2C?logo=pytorch&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-5C3EE8?logo=opencv&logoColor=white)
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt6)-41CD52?logo=qt&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-154%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-176%20passed-2EA44F)
 
 **Traffic Monitor** là ứng dụng desktop phân tích video giao thông trên GPU. Ứng dụng phát hiện và phân loại phương tiện bằng **YOLOv8n**, theo vết từng xe bằng **ByteTrack**, đếm lượt xe **IN/OUT** qua vạch đếm, **ước lượng tốc độ (km/h)** bằng biến đổi phối cảnh, **phát hiện xe vượt tốc độ**, **giám sát đối tượng trong vùng ROI** (số đối tượng hiện có, thời gian lưu trú, sự kiện vào/ra, cảnh báo quá giờ), hiển thị thống kê theo thời gian thực, và xuất **video đã chú thích** cùng **báo cáo JSON/CSV**.
 
@@ -173,12 +173,15 @@ traffic_monitor/
 │   └── calibration/            # hiệu chỉnh theo video, ví dụ vehicles.json
 ├── outputs/                    # videos/, reports/, logs/
 ├── docs/                       # traffic_monitor_spec.html (tài liệu thiết kế), images/
-└── tests/                      # 154 test pytest
+└── tests/                      # 176 test pytest
 ```
 
 Hướng phụ thuộc chỉ đi một chiều: `ui → pipeline/services → core → models/constants/utils`. Tầng `core` và `pipeline` không import PySide6, nên kiểm thử được mà không cần giao diện.
 
-📄 Tài liệu thiết kế chi tiết (SDD, có demo UI tương tác): [`docs/traffic_monitor_spec.html`](docs/traffic_monitor_spec.html)
+📄 Tài liệu:
+- Yêu cầu ban đầu: [`docs/traffic_monitor_requirements.md`](docs/traffic_monitor_requirements.md)
+- Tài liệu thiết kế chi tiết (SDD, có demo UI tương tác): [`docs/traffic_monitor_spec.html`](docs/traffic_monitor_spec.html)
+- Tài liệu kỹ thuật giám sát đối tượng trong vùng ROI: [`docs/region_monitoring_spec.md`](docs/region_monitoring_spec.md)
 
 ---
 
@@ -288,19 +291,22 @@ Nút bị chặn hiển thị mờ nhưng vẫn bấm được; khi bấm, thanh
 | Bước | Quy tắc |
 |---|---|
 | Lọc | Giữ `confidence ≥ threshold` (mặc định 0.30) và `class_id ∈ {2 car, 3 motorcycle, 5 bus, 7 truck}` |
-| Theo vết | `ByteTrack(frame_rate = fps thực của video)` → `DetectionsSmoother(length=5)` |
+| Phát hiện | NMS bỏ qua lớp (`agnostic_nms`): một xe vừa được nhận là `car` vừa là `truck` chỉ giữ 1 box. Trên video mẫu, số cặp box trùng giảm từ 33 xuống 3 trong 60 frame đầu |
+| Theo vết | `ByteTrack(frame_rate = fps thực)` → **bỏ phiếu lớp** theo track (có trọng số confidence, 30 frame) → **bộ lọc Kalman** vận tốc đều trên tâm + kích thước box. Track chỉ hiện khi đã thấy ≥ `min_hits` (3) frame, nên box nhiễu một frame không bao giờ được đếm. YOLO bỏ sót ≤ `coast_frames` (8) frame thì box vẫn hiện ở vị trí dự đoán (không dùng để đo tốc độ). Box trùng của cùng một xe (IoU > 0,6) được gộp; ByteTrack cấp ID mới ngay chỗ một xe vừa mất dấu (≤ `stitch_frames`) thì giữ ID cũ |
 | Đếm | `LineZone.trigger()` được gọi **đúng 1 lần/frame**, anchor `BOTTOM_CENTER`. Đếm theo loại lấy từ mask `crossed_in` / `crossed_out`. Với vạch đi từ trái sang phải: xe đi lên là IN, xe đi xuống là OUT |
 | Phối cảnh | `cv2.getPerspectiveTransform(ABCD_pixel → [0,0],[W,0],[W,L],[0,L] mét)` |
-| Tốc độ | `v = ‖P_cuối − P_đầu‖ ÷ ((f_cuối − f_đầu) ÷ fps) × 3.6` trên `deque(maxlen = fps × window_seconds)`, cần tối thiểu `min_samples` điểm; **không** tính từ 2 frame liên tiếp |
-| Vi phạm | `speed > limit` (bằng giới hạn thì không tính). Mỗi xe có 1 bản ghi, cập nhật `max_speed_kmh` |
+| Tốc độ | Điểm mặt đất = đáy giữa **box gốc của YOLO** (không dùng box Kalman, vì bộ lọc khởi động ở vận tốc 0 sẽ vọt lố). Vận tốc = **hệ số hồi quy tuyến tính** vị trí (mét) theo thời gian trên `deque(maxlen = fps × window_seconds)`. Chỉ đo khi điểm nằm **trong vùng hiệu chỉnh ABCD** và box không chạm mép khung hình |
+| Độ tin cậy tốc độ | Một lần đo chỉ được chấp nhận khi: mỗi pixel ứng với ≤ `max_metres_per_pixel` (0,8 m) mặt đường (ở đầu xa vùng hiệu chỉnh 1 px ≈ 2 m nên không đo), xe đi ≥ `min_pixel_travel` (20 px) trên ảnh trong cửa sổ, và tốc độ của nửa đầu, nửa sau, cả cửa sổ lệch nhau ≤ 25 %. Hồi quy tự loại các điểm lệch > max(0,5 m, 3σ) rồi khớp lại. Box đổi kích thước đột ngột > 25 % (bắt đầu/hết bị che) thì xóa lịch sử đo của xe đó và đo lại. Không đạt thì **không báo số mới** (giữ số đáng tin gần nhất). Loại giá trị > `max_kmh`; số hiển thị làm mượt EMA (`smoothing_alpha`) |
+| Vi phạm | `speed > limit` trong ≥ `violation_confirm_samples` (5) lần đo mới liên tiếp, nên một giá trị nhiễu đơn lẻ không thành vi phạm. Mỗi xe có 1 bản ghi, cập nhật `max_speed_kmh` |
 | Tốc độ trung bình | Trung bình của tốc độ gần nhất của từng xe trong phiên |
-| Trong vùng ROI | Anchor (`bottom_center` mặc định, hoặc `center`) nằm **trong hoặc trên biên** polygon **và** lớp được vùng cho phép. Các vùng độc lập: một đối tượng có thể thuộc nhiều vùng chồng lấn |
+| Trong vùng ROI | Anchor (**tâm box `center`** mặc định, hoặc `bottom_center`) nằm **trong hoặc trên biên** polygon **và** lớp được vùng cho phép. Các vùng độc lập: một đối tượng có thể thuộc nhiều vùng chồng lấn |
+| Vẽ vùng khi xét theo tâm box | Xe cao (xe tải, xe buýt) có tâm box cao hơn mặt đường 1,5–2 m, nên khi chiếu xuống mặt đường tâm bị lệch về phía xa camera theo chiều ngang (video mẫu: lệch khoảng 1,5–2 m ra lề). Vì vậy cạnh vùng ở phía đó nên chừa thêm khoảng 2 m. Cạnh nơi xe rời khung hình phải đặt đủ xa mép ảnh, để tâm box ra khỏi vùng trước khi xe bị cắt ở mép (nếu không sẽ thành LOST thay vì EXIT). `zone_a` của video mẫu được vẽ theo vạch sơn đo được: lề khẩn cấp (vạch mép đường lùi ra 2 m) đến vạch giáp dải phân cách, từ hàng 990 đến 1650 (4K) |
 | Thời gian | Thời gian media = `frame_index ÷ fps`, nên đồng hồ dừng khi Pause |
-| Vào vùng | Track chuyển từ ngoài vào trong: mở session, `entry_time` = thời điểm hiện tại, sự kiện ENTER |
+| Vào vùng | Track ở trong vùng **liên tiếp `min_confirm_frames` (3) frame** mới mở session và phát ENTER; `entry_time` = frame đầu tiên của chuỗi đó |
 | Lưu trú | `dwell = now − entry_time` khi còn trong vùng; `T_dwell = T_exit − T_entry` khi đã ra |
 | Ra vùng | Ở ngoài (hoặc không thấy) lâu hơn `grace_seconds` (mặc định 1 s) thì đóng session, `exit_time` = lần cuối thấy trong vùng. Đã thấy ở ngoài thì là **EXIT**; biến mất ngay khi đang trong vùng thì là **LOST**. Rời vùng rồi quay lại sau grace thì là session mới; hai `track_id` khác nhau không bao giờ bị gộp |
 | Quá giờ | `dwell > max_dwell_seconds` (0 = tắt): 1 sự kiện OVERSTAY cho mỗi session |
-| Occupancy | Số `track_id` duy nhất có session đang mở trong vùng tại frame hiện tại; khác với số lượt vào (ENTER) |
+| Occupancy | Số `track_id` duy nhất có session đang mở **và chưa bị thấy ở ngoài vùng** (xe đã ra nhưng còn trong grace period không được tính); khác với số lượt vào (ENTER) |
 
 ---
 
@@ -317,9 +323,15 @@ Cấu hình mặc định nằm ở `app/config/default_config.json`. Khi bấm 
 | `speed.limit_kmh` | `80` | Giới hạn tốc độ |
 | `speed.window_seconds` / `min_samples` | `1.0` / `12` | Cửa sổ tính tốc độ |
 | `perspective.source_points` | `[[1252,787],[2298,803],[5039,2159],[-550,2159]]` | 4 điểm A, B, C, D (pixel gốc) |
-| `perspective.road_width_m` / `road_length_m` | `25` / `250` | Kích thước thực của vùng ABCD |
+| `perspective.road_width_m` / `road_length_m` | `27.3` / `270` | Kích thước thực của vùng ABCD (video mẫu: hiệu chỉnh theo vạch sơn, xem mục 12) |
 | `counting_line.start` / `end` | `[0,1500]` / `[3840,1500]` | Vạch đếm (pixel gốc) |
-| `regions.enabled` / `anchor` / `grace_seconds` | `true` / `bottom_center` / `1.0` | Bật giám sát vùng, điểm xét, thời gian chờ trước khi tính là đã ra |
+| `model.agnostic_nms` | `true` | Gộp box trùng khác lớp |
+| `tracker.smoothing` / `min_hits` / `kalman_measurement_scale` / `class_vote_window` | `kalman` / `3` / `6.0` / `30` | Làm mượt box, số frame tối thiểu để hiện track, độ mượt (lớn hơn = mượt hơn nhưng trễ hơn), cửa sổ bỏ phiếu lớp |
+| `speed.min_pixel_travel` / `max_half_window_difference` / `max_metres_per_pixel` | `20` / `0.25` / `0.8` | Điều kiện tin cậy của một lần đo tốc độ |
+| `tracker.kalman_size_scale` / `coast_frames` / `stitch_frames` | `2.5` / `8` / `15` | Kích thước box mượt hơn vị trí, số frame giữ box khi YOLO bỏ sót, số frame cho phép nối lại ID |
+| `speed.max_kmh` / `smoothing_alpha` / `violation_confirm_samples` | `250` / `0.3` / `5` | Loại giá trị vô lý, làm mượt số hiển thị, số lần đo liên tiếp để xác nhận vi phạm |
+| `regions.enabled` / `anchor` / `grace_seconds` / `min_confirm_frames` | `true` / `center` / `1.0` / `3` | Bật giám sát vùng, điểm xét, thời gian chờ trước khi tính là đã ra, số frame xác nhận vào vùng |
+| `annotation.font_family` / `font_path` / `label_font_px` / `panel_font_px` | `Times New Roman` / `""` / `26` / `19` | Font chữ trên video (cỡ chữ tính ở 1080p, tự co giãn theo độ phân giải); `font_path` để dùng file font riêng |
 | `regions.zones[]` | `zone_a`, `zone_b` (2 chiều đường của video mẫu, ngưỡng 4 s để minh họa) | `roi_id` (ASCII), `name`, `polygon` (pixel gốc), `allowed_classes` (rỗng = mọi lớp), `max_dwell_seconds` |
 | `processing.max_width` | `1920` | Frame rộng hơn mức này được thu nhỏ trước khi xử lý; tọa độ được scale tự động |
 | `output.*` | `outputs/...` | Đường dẫn video, báo cáo, log |
@@ -374,7 +386,7 @@ Năm khóa bắt buộc (`video`, `total_in`, `total_out`, `by_class`, `speed_vi
     "grace_seconds": 1.0,
     "zones": [{ "roi_id": "zone_a", "name": "Làn chiều về (trái)", "occupancy": 2, "peak_occupancy": 8,
                 "entries": 15, "exits": 13, "lost": 0, "overstays": 2, "average_dwell_seconds": 1.6,
-                "polygon": [[1194, 990], [1686, 990], [1716, 1950], [338, 1950]], "max_dwell_seconds": 4.0 }],
+                "polygon": [[1091, 990], [1688, 990], [1719, 1650], [324, 1650]], "max_dwell_seconds": 4.0 }],
     "sessions": [{ "session_id": 1, "track_id": 18, "class_name": "car", "roi_id": "zone_a",
                    "entry_time": 12.4, "last_seen_time": 18.7, "exit_time": 18.7, "dwell_seconds": 6.3,
                    "status": "exited", "overstay": true, "roi_name": "Làn chiều về (trái)" }],
@@ -388,7 +400,7 @@ Năm khóa bắt buộc (`video`, `total_in`, `total_out`, `by_class`, `speed_vi
 ## 11. Kiểm thử
 
 ```bash
-python -m pytest                              # toàn bộ 154 test (~3 phút trên GPU)
+python -m pytest                              # toàn bộ 176 test (~2 phút trên GPU)
 python -m pytest -m "not gpu and not ui"      # chỉ chạy test nhanh, không cần GPU
 ```
 
@@ -415,8 +427,11 @@ python -m pytest -m "not gpu and not ui"      # chỉ chạy test nhanh, không 
 ## 12. Hiệu năng và ghi chú kỹ thuật
 
 - **Hiệu năng** (GeForce MX570 2 GB, video 4K xử lý ở 1920 px, YOLOv8n FP16): khoảng 9–12 fps khi chạy pipeline không UI, khoảng 6–11 fps khi chạy trong ứng dụng. Giám sát 2 vùng ROI thêm khoảng 7 ms mỗi frame.
-- **Nhãn vùng trên frame** dùng `roi_id` (ASCII); tên tiếng Việt chỉ hiển thị trong UI và báo cáo.
-- **Độ trễ do làm mượt:** `DetectionsSmoother` lấy trung bình 5 box, nên thời điểm vào/ra vùng trễ khoảng 2 frame so với box thô; thời gian lưu trú không bị ảnh hưởng.
+- **Chữ trên video** vẽ bằng Pillow với font TrueType (mặc định Times New Roman Bold; Linux dùng Liberation Serif, font tương thích kích thước). Nhãn đặt cố định ngay trên box, không tự dời chỗ theo các nhãn khác.
+- **Độ chính xác tốc độ** (video mẫu): cùng một xe, tốc độ đo ở nửa xa và nửa gần camera lệch nhau trung vị 3 %, nên phép chiếu phối cảnh nhất quán; độ dao động tốc độ của từng xe trong lúc chạy 0,8–5 % (lệch tối đa so với trung vị của chính xe đó < 15 %, có test). Tốc độ app hiển thị khớp với tốc độ đo theo đoạn (thời gian qua 2 vạch ảo cách 95 m) trong ±2,1 %, trung bình 0,9 % (test `tests/test_speed_validation.py`).
+- **Hiệu chỉnh video mẫu:** giáo trình Supervision dùng 25 × 250 m. Đo vạch sơn trên ảnh nhìn từ trên xuống cho thấy với kích thước đó, chu kỳ vạch đứt chỉ 16,65 m và làn rộng 3,44 m, trong khi chuẩn tham khảo là 18 m (vạch 6 m + hở 12 m) và 3,75 m. Vì vậy hiệu chỉnh được đổi thành **27,3 × 270 m** (tốc độ tăng khoảng 8 %). Sau khi đổi: chu kỳ vạch 17,6–18,0 m, làn 3,6–3,9 m. Chuẩn 6/12 m lấy theo quy định của Áo (nước láng giềng) và chưa được xác nhận bằng văn bản của Séc; đoạn xa vẫn ngắn hơn đoạn gần khoảng 4 %. Cách chắc chắn nhất vẫn là đo với một xe chạy thử biết trước tốc độ (issue #4).
+- **Font:** chữ trên video và toàn bộ giao diện dùng Times New Roman (`annotation.font_family` cho video, `FONT_FAMILY` trong `app/ui/styles.py` cho giao diện).
+- **Độ trễ do làm mượt:** bộ lọc Kalman trễ khoảng 1 frame so với box thô, nên thời điểm vào/ra vùng trễ khoảng 1 frame; thời gian lưu trú sai lệch tối đa ±1 frame.
 - **Đa luồng I/O:** đọc và ghi video chạy ở 2 luồng riêng, nối với nhau bằng queue có giới hạn, nên video không bao giờ bị nạp toàn bộ vào RAM.
 - **Cache model:** YOLO chỉ được tải một lần cho mỗi tiến trình. Việc khởi động GPU chạy ở nền ngay khi mở app, nên frame đầu tiên xuất hiện khoảng 0,7 giây sau khi bấm Start.
 - **PySide6 và torch:** `app/ui/__init__.py` nạp torch/ultralytics trước PySide6 và thay hàm kiểm tra import của PySide6 (`app/utils/qt_compat.py`). Nếu không, lần tải YOLO đầu tiên trong QThread mất hơn 30 giây.

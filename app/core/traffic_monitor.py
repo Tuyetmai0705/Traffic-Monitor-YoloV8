@@ -6,6 +6,7 @@ import numpy as np
 import supervision as sv
 
 from app.config.settings import AppConfig
+from app.core.box_smoother import RAW_BOXES_KEY
 from app.core.counter import VehicleCounter
 from app.core.detector import VehicleDetector
 from app.core.dwell_time_tracker import DwellTimeTracker
@@ -20,6 +21,10 @@ from app.models.event import RegionEvent
 from app.models.region_statistics import RegionStatistics
 from app.models.track_session import TrackSession
 from app.models.traffic_statistics import TrafficStatistics
+
+
+# A raw box growing or shrinking by more than 25 % between two detections means occlusion changed.
+_SHAPE_JUMP = 1.25
 
 
 class TrafficMonitor:
@@ -48,6 +53,7 @@ class TrafficMonitor:
         self._occupancy = occupancy_counter
         self._fps = fps if fps > 0 else 25.0
         self._media_time = 0.0
+        self._raw_sizes: dict[int, tuple[float, float]] = {}
 
     @classmethod
     def from_config(cls, config: AppConfig, video_info: sv.VideoInfo, load_model: bool = True) -> TrafficMonitor:
@@ -62,9 +68,9 @@ class TrafficMonitor:
             tracker=VehicleTracker(config.tracker, frame_rate=video_info.fps),
             counter=VehicleCounter(config.counting_line.start, config.counting_line.end),
             speed_estimator=SpeedEstimator(config.perspective, config.speed, fps=video_info.fps),
-            violation_detector=SpeedViolationDetector(config.speed.limit_kmh),
+            violation_detector=SpeedViolationDetector(config.speed.limit_kmh, config.speed.violation_confirm_samples),
             roi_manager=ROIManager(zones, regions.anchor) if zones else None,
-            dwell_tracker=DwellTimeTracker(zones, regions.grace_seconds) if zones else None,
+            dwell_tracker=DwellTimeTracker(zones, regions.grace_seconds, regions.min_confirm_frames) if zones else None,
             occupancy_counter=OccupancyCounter(zone.roi_id for zone in zones) if zones else None,
             fps=video_info.fps,
         )
@@ -109,19 +115,42 @@ class TrafficMonitor:
         detections = self._tracker.update(detections)
         self._counter.count(detections)
 
-        anchors = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-        self._speed.update_track(detections.tracker_id, self._speed.transform_points(anchors), frame_index)
+        # Speed uses the ground point (bottom centre) of the raw YOLO box: least-squares
+        # regression over the window is the right filter for it; the Kalman box is for display.
+        raw = sv.Detections(xyxy=detections.data.get(RAW_BOXES_KEY, detections.xyxy))
+        anchors = raw.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+        measured = ~np.isnan(anchors).any(axis=1)          # coasting boxes are predictions, never measured
+        usable = measured & ~_touches_edge(np.nan_to_num(raw.xyxy), frame.shape)
+        usable[usable] = self._speed.in_calibrated_area(anchors[usable])
+        self._reset_on_shape_change(detections.tracker_id, raw.xyxy, measured)
+        self._speed.update_track(detections.tracker_id, self._speed.transform_points(anchors), frame_index, usable, anchors)
 
         speeds: dict[int, float | None] = {}
         violating: set[int] = set()
         for tracker_id, class_id in zip(detections.tracker_id, detections.class_id):
             tid = int(tracker_id)
             speeds[tid] = self._speed.get_speed(tid)
-            if self._violations.check(tid, speeds[tid], self._detector.get_class_name(class_id), frame_index):
+            name = self._detector.get_class_name(class_id)
+            if self._violations.check(tid, speeds[tid], name, frame_index, fresh=self._speed.is_fresh(tid)):
                 violating.add(tid)
         self._media_time = frame_index / self._fps
         events = self._update_regions(detections)
         return DetectionResult(frame_index, detections, speeds, violating, self.get_statistics(), events)
+
+    def _reset_on_shape_change(self, tracker_ids: np.ndarray, raw_xyxy: np.ndarray, measured: np.ndarray) -> None:
+        """Restart speed history when a raw box jumps in size (occlusion begins or ends)."""
+        for tracker_id, box, ok in zip(tracker_ids, raw_xyxy, measured):
+            if not ok:
+                continue
+            tid = int(tracker_id)
+            size = (float(box[2] - box[0]), float(box[3] - box[1]))
+            previous = self._raw_sizes.get(tid)
+            self._raw_sizes[tid] = size
+            if previous is None:
+                continue
+            ratios = (size[0] / max(previous[0], 1.0), size[1] / max(previous[1], 1.0))
+            if any(r < 1 / _SHAPE_JUMP or r > _SHAPE_JUMP for r in ratios):
+                self._speed.reset_track(tid)
 
     def _update_regions(self, detections: sv.Detections) -> list[RegionEvent]:
         """ROI membership → dwell sessions → occupancy. Time is media time, so it stops when paused."""
@@ -189,3 +218,12 @@ class TrafficMonitor:
             self._dwell.reset()
             self._occupancy.reset()
         self._media_time = 0.0
+        self._raw_sizes.clear()
+
+
+def _touches_edge(xyxy: np.ndarray, shape: tuple[int, ...], margin: int = 2) -> np.ndarray:
+    """True for boxes cut by the frame border: their bottom centre is not the real ground point."""
+    if len(xyxy) == 0:
+        return np.zeros(0, dtype=bool)
+    height, width = shape[:2]
+    return (xyxy[:, 0] <= margin) | (xyxy[:, 1] <= margin) | (xyxy[:, 2] >= width - margin) | (xyxy[:, 3] >= height - margin)

@@ -122,7 +122,8 @@ def test_regions_are_tracked_independently() -> None:
     step(tracker, 0, {1: True}, extra={"zone_b": [True]})
     step(tracker, 1, {1: True}, extra={"zone_b": [False]})
     open_ids = tracker.get_open_track_ids()
-    assert open_ids == {"zone_a": {1}, "zone_b": {1}}               # zone_b still within grace
+    assert open_ids == {"zone_a": {1}, "zone_b": set()}             # seen outside zone_b: not counted
+    assert [s.roi_id for s in tracker.get_active_sessions(include_leaving=True)] == ["zone_a", "zone_b"]
     for frame in range(2, 10):
         step(tracker, frame, {1: True}, extra={"zone_b": [False]})
     assert tracker.get_open_track_ids() == {"zone_a": {1}, "zone_b": set()}
@@ -167,5 +168,30 @@ def test_dwell_does_not_grow_while_outside_during_grace() -> None:
     for frame in range(4, 9):                   # outside but within the grace period
         events += step(tracker, frame, {5: False})
     assert tracker.get_dwell("zone_a", 5) == pytest.approx(0.3)
-    assert tracker.get_active_sessions()[0].dwell_seconds == pytest.approx(0.3)
+    assert tracker.get_active_sessions() == []                       # leaving: hidden like occupancy
+    assert tracker.get_active_sessions(include_leaving=True)[0].dwell_seconds == pytest.approx(0.3)
     assert not any(e.event_type is EventType.OVERSTAY for e in events)   # never inside for > 0.35 s
+
+
+def test_entry_needs_consecutive_frames() -> None:
+    zones = [ROI("zone_a", "zone_a", [[0, 0], [10, 0], [10, 10]], [], 0.0)]
+    tracker = DwellTimeTracker(zones, grace_seconds=0.5, min_confirm_frames=3)
+    events = []
+    events += step(tracker, 0, {1: True})
+    events += step(tracker, 1, {1: True})
+    events += step(tracker, 2, {1: False})                   # broken streak: nothing yet
+    assert events == [] and tracker.get_open_track_ids()["zone_a"] == set()
+    for frame in range(3, 6):
+        events += step(tracker, frame, {1: True})
+    assert [e.event_type for e in events] == [EventType.ENTER]
+    assert events[0].timestamp == pytest.approx(0.3)           # entry = first of the 3 frames
+    assert tracker.get_active_sessions()[0].entry_time == pytest.approx(0.3)
+
+
+def test_one_frame_track_never_enters() -> None:
+    zones = [ROI("zone_a", "zone_a", [[0, 0], [10, 0], [10, 10]], [], 0.0)]
+    tracker = DwellTimeTracker(zones, grace_seconds=0.2, min_confirm_frames=3)
+    events = step(tracker, 0, {9: True})
+    for frame in range(1, 10):
+        events += step(tracker, frame, {})
+    assert events == [] and tracker.get_sessions() == []

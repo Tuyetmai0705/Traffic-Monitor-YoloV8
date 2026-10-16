@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -37,7 +38,7 @@ from app.services.config_service import ConfigService
 from app.utils.display import to_qimage
 
 _HANDLE_RADIUS = 7
-_ANCHOR_LABELS = {"bottom_center": "Điểm đáy giữa box (bottom_center)", "center": "Tâm box (center)"}
+_ANCHOR_LABELS = {"center": "Tâm box (center)", "bottom_center": "Điểm đáy giữa box (bottom_center)"}
 
 
 class PolygonCanvas(QWidget):
@@ -263,6 +264,7 @@ class ROIEditorDialog(QDialog):
             enabled=self.enabled.isChecked(),
             anchor=self.anchor.currentData(),
             grace_seconds=self.grace.value(),
+            min_confirm_frames=self.confirm.value(),
             zones=[ROI.from_dict(zone.to_dict()) for zone in self._zones],
         )
         try:
@@ -290,8 +292,14 @@ class ROIEditorDialog(QDialog):
         self.grace.setSuffix(" s")
         self.grace.setValue(regions.grace_seconds)
         self.grace.setToolTip("Đối tượng phải ở ngoài vùng (hoặc mất dấu) lâu hơn thời gian này mới tính là đã ra.")
+        self.confirm = QSpinBox()
+        self.confirm.setRange(1, 50)
+        self.confirm.setSuffix(" frame")
+        self.confirm.setValue(regions.min_confirm_frames)
+        self.confirm.setToolTip("Đối tượng phải ở trong vùng liên tiếp số frame này mới tính là đã vào (lọc box nhiễu).")
         form.addRow(self.enabled)
         form.addRow("Điểm xét trong vùng", self.anchor)
+        form.addRow("Xác nhận vào vùng", self.confirm)
         form.addRow("Grace period", self.grace)
         return group
 

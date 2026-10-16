@@ -146,5 +146,8 @@ class VehicleDetector:
             "imgsz": self._config.imgsz,
             "device": self._device,
             "half": bool(self._config.half and self._device.startswith("cuda")),
+            # One vehicle is often boxed as both "car" and "truck"; class-aware NMS keeps both
+            # and the tracker then creates two tracks. Class-agnostic NMS keeps the best one.
+            "agnostic_nms": bool(self._config.agnostic_nms),
             "verbose": False,
         }

@@ -103,6 +103,7 @@ class SettingsDialog(QDialog):
         config.model.path = self.model_path.text().strip()
         config.model.device = self.device.currentData()
         config.model.half = self.half.isChecked()
+        config.model.agnostic_nms = self.agnostic_nms.isChecked()
         config.model.imgsz = self.imgsz.value()
         config.model.confidence = round(self.confidence.value(), 2)
         config.model.iou = round(self.iou.value(), 2)
@@ -151,6 +152,9 @@ class SettingsDialog(QDialog):
         form.addRow("Thiết bị suy luận", self.device)
         self.half = QCheckBox("Dùng FP16 trên GPU (nhanh hơn)")
         form.addRow("", self.half)
+        self.agnostic_nms = QCheckBox("Gộp box trùng khác lớp (agnostic NMS)")
+        self.agnostic_nms.setToolTip("Một xe được nhận vừa là car vừa là truck sẽ chỉ giữ 1 box, tránh đếm trùng.")
+        form.addRow("", self.agnostic_nms)
         self.imgsz = QSpinBox()
         self.imgsz.setRange(160, 1920)
         self.imgsz.setSingleStep(32)
@@ -274,6 +278,7 @@ class SettingsDialog(QDialog):
         index = self.device.findData(config.model.device)
         self.device.setCurrentIndex(index if index >= 0 else 0)
         self.half.setChecked(config.model.half)
+        self.agnostic_nms.setChecked(config.model.agnostic_nms)
         self.imgsz.setValue(config.model.imgsz)
         self.max_width.setValue(config.processing.max_width)
         self.confidence.setValue(config.model.confidence)
@@ -307,7 +312,7 @@ class SettingsDialog(QDialog):
         try:
             canvas = draw_calibration(
                 self._preview_frame, config.counting_line.start, config.counting_line.end, config.perspective.source_points,
-                config.regions.zones if config.regions.enabled else (),
+                config.regions.zones if config.regions.enabled else (), config.annotation,
             )
         except Exception:  # preview must never break the form
             return

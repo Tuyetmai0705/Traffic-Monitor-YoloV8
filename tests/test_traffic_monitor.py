@@ -28,6 +28,13 @@ class ScriptedDetector(VehicleDetector):
         return make_detections([[90, y - 30, 110, y]], [2], confidences=[0.9])
 
 
+def _frame(index: int) -> np.ndarray:
+    """A 300x2100 frame (the scripted car must not touch the border) whose first pixel encodes ``index``."""
+    frame = np.zeros((2100, 300, 3), dtype=np.uint8)
+    frame[0, 0, 0] = index
+    return frame
+
+
 def _monitor(config: AppConfig, limit: float = 80) -> TrafficMonitor:
     perspective = PerspectiveConfig([[0, 0], [200, 0], [200, 2000], [0, 2000]], 20, 200)
     return TrafficMonitor(
@@ -42,7 +49,7 @@ def _monitor(config: AppConfig, limit: float = 80) -> TrafficMonitor:
 def _run(monitor: TrafficMonitor, frames: int):
     result = None
     for index in range(frames):
-        frame = np.full((4, 4, 3), index, dtype=np.uint8)
+        frame = _frame(index)
         result = monitor.process_frame(frame, index)
     return result
 
@@ -117,17 +124,17 @@ def test_region_entry_dwell_exit_through_monitor(config: AppConfig) -> None:
     events = []
     occupancy = []
     for index in range(45):
-        result = monitor.process_frame(np.full((4, 4, 3), index, dtype=np.uint8), index)
+        result = monitor.process_frame(_frame(index), index)
         events += result.region_events
         occupancy.append(result.statistics.regions[0].occupancy)
     assert [e.event_type for e in events] == [EventType.ENTER, EventType.EXIT]
-    # DetectionsSmoother averages 5 boxes, so the smoothed anchor lags the raw one by 2 frames.
-    assert events[0].timestamp == pytest.approx(12 / FPS)
-    assert events[1].dwell_seconds == pytest.approx(20 / FPS)
+    # The Kalman filter starts from the first box and lags the raw one by about 1 frame.
+    assert events[0].timestamp == pytest.approx(11 / FPS, abs=1 / FPS)
+    assert events[1].dwell_seconds == pytest.approx(20 / FPS, abs=1.5 / FPS)  # ±1 frame filter warm-up
     assert max(occupancy) == 1 and occupancy[-1] == 0
     region = result.statistics.regions[0]
     assert (region.entries, region.exits, region.peak_occupancy) == (1, 1, 1)
-    assert region.average_dwell_seconds == pytest.approx(0.8)
+    assert region.average_dwell_seconds == pytest.approx(0.8, abs=1.5 / FPS)
     assert monitor.get_sessions()[0].status.value == "exited"
 
 
@@ -135,7 +142,7 @@ def test_region_overstay_through_monitor(config: AppConfig) -> None:
     monitor = _region_monitor(config, max_dwell=0.5)
     result = None
     for index in range(26):
-        result = monitor.process_frame(np.full((4, 4, 3), index, dtype=np.uint8), index)
+        result = monitor.process_frame(_frame(index), index)
     region = result.statistics.regions[0]
     assert region.overstays == 1
     assert region.active_sessions[0].overstay

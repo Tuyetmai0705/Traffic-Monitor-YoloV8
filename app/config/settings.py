@@ -29,6 +29,7 @@ class ModelConfig:
     device: str
     half: bool
     imgsz: int
+    agnostic_nms: bool
 
 
 @dataclass
@@ -40,6 +41,13 @@ class TrackerConfig:
     minimum_matching_threshold: float
     minimum_consecutive_frames: int
     smoother_length: int
+    smoothing: str
+    min_hits: int
+    kalman_measurement_scale: float
+    kalman_size_scale: float
+    coast_frames: int
+    stitch_frames: int
+    class_vote_window: int
 
 
 @dataclass
@@ -58,6 +66,12 @@ class SpeedConfig:
     window_seconds: float
     min_samples: int
     stale_seconds: float
+    max_kmh: float
+    smoothing_alpha: float
+    violation_confirm_samples: int
+    min_pixel_travel: float
+    max_half_window_difference: float
+    max_metres_per_pixel: float
 
 
 @dataclass
@@ -87,6 +101,16 @@ class UIConfig:
 
 
 @dataclass
+class AnnotationConfig:
+    """Text drawn on frames. Sizes are pixels at 1080p and scale with the frame height."""
+
+    font_family: str
+    font_path: str
+    label_font_px: int
+    panel_font_px: int
+
+
+@dataclass
 class ProcessingConfig:
     """Throughput settings: frames wider than ``max_width`` are downscaled before processing."""
 
@@ -101,6 +125,7 @@ class RegionsConfig:
     enabled: bool
     anchor: str
     grace_seconds: float
+    min_confirm_frames: int
     zones: list[ROI]
 
     @classmethod
@@ -108,7 +133,7 @@ class RegionsConfig:
         """Build from JSON, converting each zone to an ``ROI``."""
         if not isinstance(data, dict):
             raise ValueError("'regions' phải là object JSON")
-        missing = {"enabled", "anchor", "grace_seconds", "zones"} - data.keys()
+        missing = {"enabled", "anchor", "grace_seconds", "min_confirm_frames", "zones"} - data.keys()
         if missing:
             raise ValueError(f"'regions' thiếu khóa: {', '.join(sorted(missing))}")
         if not isinstance(data["zones"], list):
@@ -117,6 +142,7 @@ class RegionsConfig:
             enabled=bool(data["enabled"]),
             anchor=str(data["anchor"]),
             grace_seconds=float(data["grace_seconds"]),
+            min_confirm_frames=int(data["min_confirm_frames"]),
             zones=[ROI.from_dict(zone) for zone in data["zones"]],
         )
 
@@ -149,6 +175,7 @@ class AppConfig:
     ui: UIConfig
     processing: ProcessingConfig
     regions: RegionsConfig
+    annotation: AnnotationConfig
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dictionary."""
@@ -192,6 +219,7 @@ class AppConfig:
             ui=_build_section(UIConfig, data.get("ui"), "ui"),
             processing=_build_section(ProcessingConfig, data.get("processing"), "processing"),
             regions=RegionsConfig.from_dict(data.get("regions")),
+            annotation=_build_section(AnnotationConfig, data.get("annotation"), "annotation"),
         )
 
 

@@ -13,22 +13,38 @@ logger = get_logger("violation_detector")
 class SpeedViolationDetector:
     """Flag vehicles faster than the limit and keep their maximum speed."""
 
-    def __init__(self, speed_limit_kmh: float) -> None:
-        """Create a detector for a speed limit in km/h."""
+    def __init__(self, speed_limit_kmh: float, confirm_samples: int = 1) -> None:
+        """Create a detector; a vehicle must exceed the limit in ``confirm_samples`` consecutive estimates."""
         self._speed_limit = float(speed_limit_kmh)
+        self._confirm = max(1, int(confirm_samples))
         self._violations: dict[int, Violation] = {}
+        self._streaks: dict[int, int] = {}
 
     @property
     def speed_limit(self) -> float:
         """Speed limit in km/h."""
         return self._speed_limit
 
-    def check(self, tracker_id: int, speed: float | None, class_name: str, frame_index: int) -> bool:
-        """Register and return True when ``speed`` exceeds the limit; None speeds are ignored."""
-        if speed is None or not self.is_violation(speed):
+    def check(self, tracker_id: int, speed: float | None, class_name: str, frame_index: int, fresh: bool = True) -> bool:
+        """Return True when a confirmed violator is currently above the limit.
+
+        Only fresh estimates (re-computed this frame) advance the streak, so a
+        single noisy spike is never recorded. Once confirmed, the record keeps
+        its maximum speed; the flag follows the current speed.
+        """
+        tid = int(tracker_id)
+        if speed is None:
             return False
-        self.register_violation(tracker_id, speed, class_name, frame_index)
-        return True
+        if fresh:
+            self._streaks[tid] = self._streaks.get(tid, 0) + 1 if self.is_violation(speed) else 0
+        if tid in self._violations:
+            if fresh and self.is_violation(speed):
+                self.register_violation(tid, speed, class_name, frame_index)
+            return self.is_violation(speed)
+        if self._streaks.get(tid, 0) >= self._confirm:
+            self.register_violation(tid, speed, class_name, frame_index)
+            return True
+        return False
 
     def is_violation(self, speed: float) -> bool:
         """Strictly greater than the limit is a violation; equal is not."""
@@ -53,3 +69,4 @@ class SpeedViolationDetector:
     def reset(self) -> None:
         """Clear all violations."""
         self._violations.clear()
+        self._streaks.clear()

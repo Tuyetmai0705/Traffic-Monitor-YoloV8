@@ -40,3 +40,16 @@ def test_multiple_vehicles_and_reset() -> None:
     assert sorted(detector.get_violations()) == [1, 3]
     detector.reset()
     assert detector.get_violations() == {}
+
+
+def test_violation_needs_consecutive_fresh_estimates() -> None:
+    detector = SpeedViolationDetector(80, confirm_samples=3)
+    assert not detector.check(1, 95, "car", 10)
+    assert not detector.check(1, 70, "car", 11)               # streak broken
+    assert not detector.check(1, 95, "car", 12)
+    assert not detector.check(1, 95, "car", 13, fresh=False)  # stale value does not count
+    assert not detector.check(1, 95, "car", 14)
+    assert detector.check(1, 96, "car", 15)                    # 3rd fresh estimate in a row
+    assert detector.get_violations()[1].max_speed_kmh == 96
+    assert not detector.check(1, 75, "car", 16)                # flag follows current speed
+    assert 1 in detector.get_violations()                      # record is kept

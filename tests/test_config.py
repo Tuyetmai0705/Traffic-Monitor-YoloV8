@@ -103,8 +103,8 @@ def test_validate_rejects_invalid_regions(config_service: ConfigService, config:
 def test_default_regions_and_scaling(config: AppConfig) -> None:
     assert config.regions.enabled and [z.roi_id for z in config.regions.zones] == ["zone_a", "zone_b"]
     half = config.scaled_geometry(0.5)
-    assert half.regions.zones[0].polygon[0] == [597, 495]
-    assert config.regions.zones[0].polygon[0] == [1194, 990]       # original untouched
+    assert half.regions.zones[0].polygon[0] == [546, 495]
+    assert config.regions.zones[0].polygon[0] == [1091, 990]       # original untouched
 
 
 def test_regions_saved_in_calibration(config_service: ConfigService, config: AppConfig) -> None:
